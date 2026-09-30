@@ -91,4 +91,3 @@ edges:
   - from: single_player
     to: director
     label: 上报进度
-    style: bidirectional

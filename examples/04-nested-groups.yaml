@@ -67,6 +67,7 @@ edges:
   - from: order_api
     to: order_state
     label: 状态流转
+    style: bidirectional
   - from: order_state
     to: order_event
     label: 发布事件

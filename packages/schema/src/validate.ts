@@ -225,10 +225,14 @@ function normalize(ast: ArchSpec): NormalizedSpec {
   }));
 
   const meta: MetaSpec = ast.meta ?? {};
+  const maxColumns = ast.layout?.max_columns ?? 'auto';
+  const direction = ast.layout?.direction ?? 'TB';
+  const innerDirection = ast.layout?.inner_direction ?? 'auto';
 
   return {
     version: ast.version ?? '1.0',
     meta,
+    layout: { maxColumns, direction, innerDirection },
     groups,
     nodes,
     edges,

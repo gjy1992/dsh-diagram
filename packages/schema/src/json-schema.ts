@@ -1,4 +1,12 @@
-import { EDGE_STYLES, GROUP_VARIANTS, NODE_VARIANTS } from './types';
+import {
+  EDGE_STYLES,
+  GROUP_VARIANTS,
+  INNER_DIRECTIONS,
+  LAYOUT_DIRECTIONS,
+  MAX_MAX_COLUMNS,
+  MIN_MAX_COLUMNS,
+  NODE_VARIANTS,
+} from './types';
 
 /**
  * 手写 JSON Schema（Draft-07，Ajv 编译）。
@@ -19,6 +27,20 @@ export const archSpecSchema: Record<string, unknown> = {
         desc: { type: 'string' },
         summary: { type: 'string' },
         guide: { type: 'string' },
+      },
+    },
+    layout: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        max_columns: {
+          oneOf: [
+            { type: 'integer', minimum: MIN_MAX_COLUMNS, maximum: MAX_MAX_COLUMNS },
+            { type: 'string', enum: ['auto'] },
+          ],
+        },
+        direction: { type: 'string', enum: [...LAYOUT_DIRECTIONS] },
+        inner_direction: { type: 'string', enum: [...INNER_DIRECTIONS] },
       },
     },
     groups: {

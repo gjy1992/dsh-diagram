@@ -9,7 +9,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@dsh-diagram/schema": "workspace:*",
-    "elkjs": "^0.12.0"
+    "@dsh-diagram/schema": "workspace:*"
   }
 }

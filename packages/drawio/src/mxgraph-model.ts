@@ -35,6 +35,32 @@ export function buildDrawio(input: BuildDrawioInput): DrawioArtifact {
     `${indent(4)}<mxCell id="1" parent="0"/>`,
   );
 
+  // 连线最先输出：mxGraph 按 cell 声明顺序决定绘制层级，后声明的画在上层。
+  // 连线放在最前面，节点与分组就会覆盖连线，避免连线压住卡片文字（实测确认）。
+  for (const edge of layout.edges) {
+    lines.push(
+      `${indent(4)}<mxCell id="${escapeXmlAttribute(edge.id)}" value="${escapeXmlAttribute(edge.label ?? '')}" style="${escapeXmlAttribute(edgeStyle(edge.style))}" edge="1" parent="1" source="${escapeXmlAttribute(edge.from)}" target="${escapeXmlAttribute(edge.to)}">`,
+    );
+
+    // mxGraph 的几何点只保存中间拐点，首尾由 source/target 连接点决定
+    const waypoints = edge.points.slice(1, -1);
+    if (waypoints.length > 0) {
+      lines.push(`${indent(5)}<mxGeometry relative="1" as="geometry">`);
+      lines.push(`${indent(6)}<Array as="points">`);
+      for (const point of waypoints) {
+        lines.push(
+          `${indent(7)}<mxPoint x="${formatNumber(point.x)}" y="${formatNumber(point.y)}"/>`,
+        );
+      }
+      lines.push(`${indent(6)}</Array>`);
+      lines.push(`${indent(5)}</mxGeometry>`);
+    } else {
+      lines.push(`${indent(5)}<mxGeometry relative="1" as="geometry"/>`);
+    }
+
+    lines.push(`${indent(4)}</mxCell>`);
+  }
+
   // 分组容器：按层级升序输出，保证父 cell 先于子 cell
   const sortedGroups = [...layout.groups].sort((a, b) => a.level - b.level);
   for (const group of sortedGroups) {
@@ -51,28 +77,6 @@ export function buildDrawio(input: BuildDrawioInput): DrawioArtifact {
       `${indent(5)}<mxGeometry x="${formatNumber(node.x)}" y="${formatNumber(node.y)}" width="${formatNumber(node.width)}" height="${formatNumber(node.height)}" as="geometry"/>`,
       `${indent(4)}</mxCell>`,
     );
-  }
-
-  for (const edge of layout.edges) {
-    lines.push(
-      `${indent(4)}<mxCell id="${escapeXmlAttribute(edge.id)}" value="${escapeXmlAttribute(edge.label ?? '')}" style="${escapeXmlAttribute(edgeStyle(edge.style))}" edge="1" parent="1" source="${escapeXmlAttribute(edge.from)}" target="${escapeXmlAttribute(edge.to)}">`,
-    );
-
-    // mxGraph 的几何点只保存中间拐点，首尾由 source/target 连接点决定
-    const waypoints = edge.points.slice(1, -1);
-    if (waypoints.length > 0) {
-      lines.push(`${indent(5)}<mxGeometry relative="1" as="geometry">`);
-      lines.push(`${indent(6)}<Array as="points">`);
-      for (const point of waypoints) {
-        lines.push(`${indent(7)}<mxPoint x="${formatNumber(point.x)}" y="${formatNumber(point.y)}"/>`);
-      }
-      lines.push(`${indent(6)}</Array>`);
-      lines.push(`${indent(5)}</mxGeometry>`);
-    } else {
-      lines.push(`${indent(5)}<mxGeometry relative="1" as="geometry"/>`);
-    }
-
-    lines.push(`${indent(4)}</mxCell>`);
   }
 
   lines.push(

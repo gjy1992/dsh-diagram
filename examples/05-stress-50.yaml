@@ -3,6 +3,9 @@ version: "1.0"
 # 性能与规模化用例：50 节点 / 45 连线 / 5 个服务域
 # 每个服务域为 5 层两列的网格，域间只在末层横向互联
 # 用于验证 PRD §6 的「<= 50 节点布局耗时 < 200ms」指标
+#
+# 注意：域间连线刻意只连「同一层的末节点」。若连到跨层的节点（例如把末层连回首域的中段），
+# 最长路径分层会据此外推该节点的层号，整条并行链会被整体推移一层，肉眼看起来像"错位"——那是正确行为。
 
 meta:
   title: 微服务群压力样例
@@ -115,8 +118,8 @@ edges:
   - { from: e06, to: e08, label: 链路 }
   - { from: e07, to: e09, label: 链路 }
   - { from: e08, to: e10, label: 链路 }
-  - { from: a09, to: b10, label: 跨域, style: dashed }
-  - { from: b09, to: c10, label: 跨域, style: dashed }
-  - { from: c09, to: d10, label: 跨域, style: dashed }
-  - { from: d09, to: e10, label: 跨域, style: dashed }
-  - { from: e09, to: a10, label: 回流, style: bidirectional }
+  - { from: a10, to: b10, label: 跨域, style: dashed }
+  - { from: b10, to: c10, label: 跨域, style: dashed }
+  - { from: c10, to: d10, label: 跨域, style: dashed }
+  - { from: d10, to: e10, label: 跨域, style: dashed }
+  - { from: e10, to: a10, label: 回流, style: bidirectional }
