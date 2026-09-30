@@ -1,0 +1,76 @@
+version: "1.0"
+
+meta:
+  title: 三层嵌套分组样例
+  desc: groups[].parent 单向声明嵌套，最多 3 层
+  summary: 平台层 > 订单域 > 订单核心，逐层包络
+  guide: 分组层级即部署边界
+
+groups:
+  - id: g_platform
+    title: 平台层
+    variant: filled
+
+  - id: g_order_domain
+    title: 订单域
+    parent: g_platform
+
+  - id: g_order_core
+    title: 订单核心
+    parent: g_order_domain
+
+  - id: g_asset_domain
+    title: 资产域
+    parent: g_platform
+
+  - id: g_access
+    title: 接入层
+
+nodes:
+  - id: gateway
+    title: 统一网关
+    group: g_access
+    variant: primary
+
+  - id: order_api
+    title: 订单 API
+    desc: 对外订单接口
+    group: g_order_core
+    variant: primary
+    items:
+      - rpc:CreateOrder
+      - rpc:QueryOrder
+
+  - id: order_state
+    title: 订单状态机
+    group: g_order_core
+    items:
+      - rpc:TransitOrder
+
+  - id: order_event
+    title: 订单事件总线
+    group: g_order_domain
+    variant: warning
+    items:
+      - rpc:PublishOrderEvent
+
+  - id: asset_service
+    title: 资产服务
+    group: g_asset_domain
+    items:
+      - rpc:FulfillOrder
+
+edges:
+  - from: gateway
+    to: order_api
+    label: /order/**
+  - from: order_api
+    to: order_state
+    label: 状态流转
+  - from: order_state
+    to: order_event
+    label: 发布事件
+  - from: order_event
+    to: asset_service
+    label: 触发发货
+    style: dashed

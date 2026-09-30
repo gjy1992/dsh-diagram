@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@dsh-diagram/schema": ["packages/schema/src/index.ts"],
+      "@dsh-diagram/layout": ["packages/layout/src/index.ts"],
+      "@dsh-diagram/drawio": ["packages/drawio/src/index.ts"],
+      "@dsh-diagram/core": ["packages/core/src/index.ts"]
+    }
+  },
+  "include": ["packages/**/*.ts", "examples/**/*.ts", "scripts/**/*.ts"]
+}

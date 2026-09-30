@@ -1,0 +1,385 @@
+# dsh-diagram 工作计划（Phase 1）
+
+| 项 | 内容 |
+| :--- | :--- |
+| 依据文档 | [prd.md](./prd.md) v1.0.0 |
+| 计划范围 | **仅 Phase 1（MVP 引擎）**，不含 dsh 宿主集成与 Web UI |
+| 技术栈 | TypeScript + pnpm monorepo（Node >= 20，本机 22.14.0） |
+| 状态 | Draft — 待评审（决策记录见 §7） |
+
+---
+
+## 1. 范围界定
+
+### 1.1 本期交付（对应 prd.md §7 Phase 1）
+
+| PRD 条目 | 本计划对应里程碑 |
+| :--- | :--- |
+| 完成 YAML Schema 定义与 Ajv 静态校验函数 | M1 |
+| 完成简易 ELK.js 布局验证脚本 | M2 |
+| 跑通 YAML 到 draw.io 明文 XML 的转换并完成本地文件验证 | M3 / M4 |
+
+**在 PRD 基础上新增的一项**：groups 支持嵌套（PRD 原为单层）。理由见 §7 D6 —— 板块/子域这类真实架构天然是两层。
+
+### 1.2 明确不做（移交给 Phase 2 / 3）
+
+* `render_architecture` Tool 向 dsh 宿主的注册、Cordis 插件 manifest、热卸载。
+* ToolError 自愈回传的真实宿主通道（本期只**固化错误的 JSON 载荷格式**，不做宿主投递）。
+* dsh-web 端的深色交互式 SVG 预览卡片（Pan/Zoom、hover 高亮入出边）。
+* ```` ```arch-yaml ```` 行内 Markdown 代码块的纯手动预览通道。
+* 节点点击详情面板。
+
+> 本期唯一需要"为 Phase 2 预留"的东西：一个**与宿主无关的执行器接口**（见 §3.3）。Phase 2 接入时只替换薄适配层，不改核心逻辑。
+
+---
+
+## 2. 前置条件与环境准备
+
+| 项 | 现状 | 动作 |
+| :--- | :--- | :--- |
+| Node.js | 已装 v22.14.0 | 无需处理 |
+| npm | 已装 11.1.0 | 仅用于安装 pnpm |
+| **pnpm** | **未安装** | ✅ 已通过 corepack 固定 **pnpm 11.7.0**（root `packageManager` 字段）。注意：本机 corepack 0.31.0 与 pnpm 12.x 的新 bin 布局（`bin/pnpm.mjs`）不兼容，会报 `Cannot find module .../bin/pnpm.cjs`，故不能直接用 latest。 |
+| git | 已装 2.42.0，仓库已 `git init` | baseline 提交待确认 |
+| dsh 宿主 / 插件 SDK | 本机不存在 | 本期不依赖，故不影响交付 |
+| draw.io 桌面版 | `%LOCALAPPDATA%\Programs\draw.io\draw.io.exe`（文件名带点，不是 `drawio.exe`） | 用于 `.drawio` → PNG 功能级验证 |
+
+---
+
+## 3. 仓库结构规划
+
+```text
+dsh-diagram/
+├── prd.md                        # 需求规格说明书
+├── PLAN.md                       # 本文件
+├── package.json                  # root，private，workspace 脚本入口
+├── pnpm-workspace.yaml           # workspace 成员 + allowBuilds（pnpm 11 设置入口）
+├── tsconfig.json                 # 单一 tsconfig：strict + noEmit + paths 别名
+├── .gitignore
+├── examples/
+│   ├── 01-basic.yaml             # 最小可用：meta + nodes + edges
+│   ├── 02-groups.yaml            # 单层分组 + variant + 同分组内连线
+│   ├── 03-rpc-items.yaml         # 高密度：items 内嵌 RPC 列表
+│   ├── 04-nested-groups.yaml     # 3 层嵌套分组（D6 验证用例）
+│   ├── 05-stress-50.yaml         # 50 节点网格拓扑（性能与不重叠用例）
+│   └── 90-invalid.yaml           # 反例：id 重复 / 外键缺失 / 分组成环
+├── scripts/
+│   └── verify.ps1                # 批量 build + 调用本机 draw.io 转 PNG 做功能级验证
+├── out/                          # 验证产物（.drawio / .png），已 gitignore
+└── packages/
+    ├── schema/                   # @dsh-diagram/schema
+    ├── layout/                   # @dsh-diagram/layout
+    ├── drawio/                   # @dsh-diagram/drawio
+    └── core/                     # @dsh-diagram/core（编排 + CLI）
+```
+
+### 3.1 包职责与依赖方向
+
+```text
+schema  →（无内部依赖）
+layout  → schema
+drawio  → schema, layout
+core    → schema, layout, drawio     # 编排 + CLI
+```
+
+单向依赖，不允许反向引用；`core` 之外的包不得读写文件系统、不得调用 CLI 参数解析。
+
+### 3.2 包内统一结构
+
+```text
+packages/<name>/
+├── package.json          # name/version/exports，依赖声明
+└── src/
+    ├── index.ts          # 公共导出
+    └── ...
+```
+
+**M0 实现取舍（相对原计划的简化）**：不引入 `tsconfig.base.json` 与 project references，改为**单一根 tsconfig**（`strict` + `noEmit` + `paths` 别名指向各包 `src/index.ts`），全部代码用 `tsx` 直接运行、用 `tsc` 仅做类型检查。Phase 1 无发布需求，省掉 `dist/` 构建链路；包间通过 `paths` 别名解析，因此不需要先 build 再跑。
+
+### 3.3 宿主无关的执行器接口（Phase 2 预留点）
+
+`@dsh-diagram/core` 暴露一个纯函数作为唯一编排入口，Phase 2 的 Tool 执行器只是它的薄包装：
+
+```ts
+type RenderResult =
+  | { ok: true; data: { ast: ArchSpec; layout: LayoutResult; drawioXml: string } }
+  | { ok: false; error: { code: string; path: string; message: string; hint?: string }[] };
+
+// 注意：ELK.js 的 layout() 本身返回 Promise，故此处为异步
+function renderArchitecture(input: { title: string; yamlSpec: string }): Promise<RenderResult>;
+```
+
+约束：**不抛异常、不做 IO**。错误以结构化数组返回，`JSON.stringify` 后即为可回传 LLM 的 ToolError 载荷。
+
+---
+
+## 4. 里程碑与任务分解
+
+依赖顺序：M0 → M1 → M2 → M3 → M4。M1 与 M2 无相互依赖，可并行推进。
+
+### M0 工程基线
+
+| ID | 任务 | 产出 |
+| :--- | :--- | :--- |
+| T0.1 | 安装并固定 pnpm（root `packageManager` 字段） | 可执行 `pnpm` |
+| T0.2 | `pnpm-workspace.yaml` + root `package.json`（private、scripts） | workspace 可识别 4 个包 |
+| T0.3 | `tsconfig.base.json`：`strict`、ES2022、声明文件输出 | 统一编译基线 |
+| T0.4 | 4 个空包骨架 + vitest 配置 | 可空跑 |
+| T0.5 | root scripts：`build` / `test` / `validate` / `build:examples` | 一键命令 |
+
+**验收**：`pnpm -r build` 成功；`pnpm test` 空跑通过；baseline 提交已打好。
+
+**技术选型**：构建用 `tsc -b`（项目引用，本期不引入打包器）；测试用 `vitest`；脚本运行用 `tsx`。
+
+---
+
+### M1 DSL 规范与校验器（`@dsh-diagram/schema`）
+
+| ID | 任务 | 产出 |
+| :--- | :--- | :--- |
+| T1.1 | 按 prd.md §4.1.1 + §7 D6 定义 TS 类型：`ArchSpec` / `Meta` / `Group` / `Node` / `Edge` | `src/types.ts` |
+| T1.2 | 手写 JSON Schema（Ajv draft 2020-12）：字段类型、必填项、枚举白名单 | `src/schema.json` |
+| T1.3 | Ajv 编译 + 缺省值填充：`version=1.0`、`group.variant=dashed`、`node.variant=default`、`edge.style=solid` | `src/validate-schema.ts` |
+| T1.4 | 语义校验（prd.md §4.3）：`nodes`/`edges` 非空且为数组；`id` 唯一；`node.group` 外键存在；`edge.from`/`edge.to` 外键存在 | `src/validate-topology.ts` |
+| T1.5 | **嵌套分组校验**（D6 新增）：`group.parent` 外键存在、不可自引用、不可成环（DFS 环检测）、深度上限 3（超出报错） | `src/validate-hierarchy.ts` |
+| T1.6 | 错误诊断对象：`{ code, path, message, hint }`；`hint` 实现 did-you-mean（编辑距离 ≤ 2 的候选 ID） | `src/diagnostics.ts` |
+| T1.7 | YAML 解析入口（`js-yaml`），YAML 语法错误转为同构诊断对象（含行号） | `src/parse.ts` |
+
+**DSL 关键设计：嵌套用 `parent` 单向声明，不引入 `children` 数组**
+
+```yaml
+groups:
+  - id: g_bff               # 必填
+    title: BFF 层           # 必填
+    variant: dashed         # 可选，dashed | filled
+    parent: <group_id>      # 可选【新增】所属上级分组，缺省为顶层
+
+nodes:
+  - id: n_order
+    group: g_bff_order      # 可指向任意层级的分组
+```
+
+这与 prd.md §2.2 的「单向引用与扁平化」哲学一致 —— 模型仍然只写"我属于谁"，不需要维护任何数组。
+
+**枚举白名单（T1.2 依据 PRD 收敛，未知值应报错而非静默兜底）**
+* `group.variant`：`dashed` \| `filled`
+* `node.variant`：`default` \| `primary` \| `danger` \| `warning` \| `muted`
+* `edge.style`：`solid` \| `dashed` \| `bidirectional`
+
+**验收**
+* 单测覆盖 §4.3 全部规则 + 嵌套全部反例（自引用、环、超深、悬空 parent）。
+* 错误文案对齐 PRD 样例：`ValidationError: edge source 'single_playr' is not defined in nodes list. Did you mean 'single_player'?`
+* `90-invalid.yaml` 能得到 ≥3 条结构化错误，且 `hint` 命中预期候选。
+
+---
+
+### M2 尺寸预估与布局（`@dsh-diagram/layout`）
+
+| ID | 任务 | 产出 |
+| :--- | :--- | :--- |
+| T2.1 | 尺寸预估器（按 §7 D1 / D5 的公式与字号 token） | `src/sizing.ts` |
+| T2.2 | 文本折行行数估算：中英文按字符宽度加权，`title` / `desc` / `items` 分别估算 | `src/text-metrics.ts` |
+| T2.3 | 扁平→层级转换：递归把 `group.parent` + `node.group` 重组为 ELK 的 children 树（支持 3 层嵌套） | `src/to-elk-graph.ts` |
+| T2.4 | ELK 调用：`layered` 算法、`direction=DOWN`、`hierarchyHandling=INCLUDE_CHILDREN`、`edgeRouting=ORTHOGONAL`、`nodePlacement=BRANDES_KOEPF`，间距参数化 | `src/layout.ts` |
+| T2.5 | 分组包络：每层分组叠加 `padding=24px`，逐层向上回写包围盒 | `src/layout.ts` |
+| T2.6 | 统一输出 `LayoutResult`：`{ nodes[], groups[], edges[{points[]}], bounds }`，坐标为**相对父容器**（ELK/draw.io 一致），另派生 `absX/absY` 供 SVG 与几何断言使用 | `src/types.ts` |
+
+**层级布局的技术前提（已查证）**
+
+* ELK 的 `layered` 算法原生支持 compound（嵌套）图，这是 `elk.hierarchyHandling` 的 `INCLUDE_CHILDREN` 模式：副作用是**跨层级边也会被正常路由**。
+* 若沿用 elkjs 默认的 `SEPARATE_CHILDREN`，各分组会被独立布局，**跨分组边界连线的 `sections` 会为空（即不路由）** —— 对本项目不可接受，因此 `INCLUDE_CHILDREN` 是硬性要求。
+* 已知取舍：elkjs 在 `INCLUDE_CHILDREN` 下会忽略子节点上覆盖的 `direction`。本 DSL 不暴露节点级 direction，无影响。
+* **降级预案**：若 `INCLUDE_CHILDREN` 在 3 层嵌套下坐标质量或性能不可接受，改为"自底向上逐层布局"——每层单独跑 ELK，把子图包围盒当作父级的一个节点尺寸，再跑父级。该路径不需要 `INCLUDE_CHILDREN`，但跨层连线需自行拼接折线。M2 用 `04-nested-groups.yaml` 跑对比后择一。
+
+**验收**
+* 6 个样例布局完成后，任意两节点矩形不相交（断言式，不靠肉眼）。
+* 每一层分组的包围盒完整包含其全部子节点与子分组。
+* `edges[].points` 非空，且首尾点与源/目标节点边界相接。
+* `05-stress-50.yaml`（50 节点）：布局耗时 < 200ms（对应 prd.md §6 性能指标）。
+* `04-nested-groups.yaml`：3 层嵌套下无节点越界出父容器。
+
+---
+
+### M3 draw.io 导出（`@dsh-diagram/drawio`）
+
+| ID | 任务 | 产出 |
+| :--- | :--- | :--- |
+| T3.1 | `mxGraphModel` 头部，画布尺寸自适应（§7 D5） | `src/mxgraph-model.ts` |
+| T3.2 | 分组容器 cell：`container=1;collapsible=0;rounded=1;dashed=1;...`；`parent` = 上级 group id 或 `"1"`（支持嵌套） | `src/cells/group.ts` |
+| T3.3 | 卡片节点 cell：HTML value（§7 D4 的 title/desc/items 三段式），`parent` = 所属 group id 或 `"1"` | `src/cells/node.ts` |
+| T3.4 | 连线 cell：`edgeStyle=orthogonalEdgeStyle`，**写入 ELK 算出的显式折线 `mxPoint` 序列**，保证导出与预览一致 | `src/cells/edge.ts` |
+| T3.5 | 样式映射表：`node.variant` / `group.variant` / `edge.style` → mxGraph style（§7 D3） | `src/style-map.ts` |
+| T3.6 | 无压缩明文 XML 序列化：不 deflate、不 base64；对 `& < > " '` 做转义 | `src/serialize.ts` |
+| T3.7 | 输出顺序保证：父 cell 必须先于子 cell 声明（mxGraph 硬约束），按层级拓扑序输出 | `src/serialize.ts` |
+| T3.8 | 文件名与标题 sanitize（去非法路径字符），输出 `${title}.drawio` | `src/filename.ts` |
+
+**验收**
+* 生成的 `.drawio` 用 DOMParser 解析无错误；根标签与属性符合 PRD §4.4.2 结构。
+* 明文可读：文本编辑器打开即为完整 XML（非压缩串、非 base64）。
+* 转义单测：标题含 `<`、`&`、`"` 时不破坏 XML 结构。
+* 嵌套用例中每个子 cell 都出现在其父 cell 之后。
+* **端到端视觉验证**：调用本机 `draw.io`（31.4.5）CLI 把 `.drawio` 导出为 PNG，肉眼确认分组框、嵌套容器、卡片、正交连线、边标签齐全 —— 这是本期"本地文件验证"的兜底手段。
+
+---
+
+### M4 编排、CLI 与端到端验证（`@dsh-diagram/core`）
+
+| ID | 任务 | 产出 |
+| :--- | :--- | :--- |
+| T4.1 | 实现 `renderArchitecture()`（见 §3.3），串联 parse → validate → layout → export | `src/render.ts` |
+| T4.2 | CLI `dsh-diagram validate <spec.yaml>`：打印结构化校验结果，exit code 0/1 | `src/cli.ts` |
+| T4.3 | CLI `dsh-diagram build <spec.yaml> -o <outdir>`：产出 `.drawio` + 布局调试 JSON | `src/cli.ts` |
+| T4.4 | 失败路径输出 JSON 诊断（即 Phase 2 的 ToolError 载荷），不打印 stack trace | `src/cli.ts` |
+| T4.5 | 补齐 6 个 examples | `examples/*.yaml` |
+| T4.6 | `scripts/verify.ps1`：批量 build 全部 examples 并转 PNG，输出验证报告 | `scripts/verify.ps1` |
+
+**验收**
+* 5 个合法样例 `build` 成功且退出码 0。
+* `90-invalid.yaml` 退出码 1，输出 JSON 数组含 `code`/`path`/`message`/`hint`。
+* `pnpm build:examples` 一键产出全部 `.drawio`，无手工干预。
+
+---
+
+## 5. Phase 1 完成定义（DoD）
+
+**验证方式已按用户指示收敛为「功能级验证」**：不写单元测试框架、不写最小验证样例，只在最后做一次端到端功能验证 —— 给若干 YAML → 产出 `.drawio` → 转为 PNG，肉眼确认渲染正确。
+
+1. `pnpm -r build`（tsc 类型检查 + 编译）全绿。
+2. 5 个合法样例经 CLI 一键跑通，产出 `.drawio` 文件。
+3. 全部 `.drawio` 能被本机 draw.io 打开并导出 PNG；视图中分组 / 嵌套容器 / 节点 / 连线 / 标签齐全，无重叠穿模、无内容裁剪。
+4. 反例样例经 `validate` 输出带 did-you-mean 的结构化错误，退出码 1，字段格式可直接作为 ToolError 载荷。
+5. 50 节点样例布局耗时 < 200ms。
+6. 导出 XML 为无压缩明文，可文本编辑二次修改。
+7. 画布尺寸随内容自适应，无固定留白或裁剪。
+8. `renderArchitecture()` 除 ELK 布局（本身为异步）外无 IO，签名与 §3.3 一致。
+
+## 5.1 执行结果（2026-09-30）
+
+| 验收项 | 结果 |
+| :--- | :--- |
+| `pnpm build` | ✅ 全绿 |
+| 5 个合法样例 build | ✅ 全部退出码 0 |
+| 功能级验证（draw.io 导出 PNG） | ✅ 5/5 成功，见 `out/*.png` |
+| 反例校验 + did-you-mean | ✅ 5 项结构化错误，`hint` 命中 `single_player` |
+| 50 节点布局耗时 | ✅ 约 100ms（< 200ms） |
+| 明文 XML | ✅ 文本编辑器可直接打开二次编辑 |
+| 画布自适应 | ✅ `pageWidth/pageHeight` 按 bounds + 40px 计算 |
+| 已知注意点 | 跨分组连线坐标需 LCA 偏移（D10）、连线标签需底色（D9）、行高需按渲染实测值（D8）—— 均已修复并回写 PRD |
+
+---
+
+## 6. 验证策略
+
+| 环节 | 手段 |
+| :--- | :--- |
+| 类型与编译 | `pnpm -r build`（TypeScript strict + 项目引用） |
+| 校验器行为 | `cli validate` 跑 `examples/*.yaml`（含 1 个反例），人工核对错误输出 |
+| 端到端功能验证 | `scripts/verify.ps1`：批量 `build` 全部样例 → `.drawio`；再调用本机 draw.io CLI 逐个转 PNG |
+| 观感确认 | 用户 / 我肉眼比对 PNG：分组嵌套层次、卡片三段式文本、variant 配色、正交连线、边标签、画布自适应 |
+
+不引入 vitest 等单测框架（本期无单测），不引入 E2E 浏览器测试（本期无 Web UI）。
+
+---
+
+## 7. 已确认决策记录（Decision Log）
+
+| ID | 决策 | 取值 |
+| :--- | :--- | :--- |
+| **D1** | 无 items 节点高度 | **48px**；高度公式见下 |
+| **D2** | 分组边框色 | 统一 **`#334155`**（覆盖 PRD §4.4.2 的 `#475569`） |
+| **D3** | 语义样式映射表 | 见 §7.1 |
+| **D4** | 卡片文本层次 | `desc` 紧跟 `title` 下一行、**居中**、字号小于 title；字号 token 见 §7.2 |
+| **D5** | 画布尺寸 | **自适应**：按布局 `bounds + 40px 边距` 计算 `pageWidth/pageHeight`，替代 PRD 固定 1920×1080 |
+| **D6** | 分组嵌套 | **语法支持嵌套，用 `groups[].parent` 单向声明**（不引入 `children` 数组）；ELK 可用 `hierarchyHandling=INCLUDE_CHILDREN` 支撑，见 T2.4；深度上限 3 层 |
+| **D7** | `.drawio` 文件外层 | 用标准 `<mxfile><diagram>` 包裹未压缩的 `mxGraphModel`（PRD 原文只提 `<mxGraphModel>` 根标签，但裸 `mxGraphModel` 不是合法 `.drawio`，会打不开）；仍满足"无压缩明文"要求，已回写 PRD §4.4.2 |
+| **D8** | 高度公式行高 | 实现时发现 PRD 原文行高（title 20 / desc 18）按裸字号取值，与 draw.io HTML 标签实际渲染行距不符，导致文字溢出卡片底部（实测确认）。已把行高修正为 title 24 / desc 20、items 前补 `<hr>` 分隔线（14px），并回写 PRD §4.1.2 |
+| **D9** | 连线标签底色 | draw.io 连线标签默认白底，深色主题下浅色文字几乎不可读（实测确认）。在连线 style 增加 `labelBackgroundColor=#152238`，回写 PRD §4.4.2 |
+| **D10** | ELK 连线坐标空间 | 实测确认：ELK 的 section 坐标记在「两端点所在分组的最近公共祖先」坐标系，跨分组才是根画布坐标，同属一个分组需叠加该分组绝对偏移。已在 `@dsh-diagram/layout` 实现 LCA 偏移换算，回写 PRD §4.4.2 |
+
+### 7.1 样式映射表（D3，深色主题）
+
+**节点卡片**（基础 style：`rounded=1;whiteSpace=wrap;html=1;`）
+
+| variant | fillColor | strokeColor | fontColor | 语义 |
+| :--- | :--- | :--- | :--- | :--- |
+| `default` | `#1e293b` | `#334155` | `#e2e8f0` | 普通模块 |
+| `primary` | `#0c4a6e` | `#38bdf8` | `#e0f2fe` | 核心 / 入口模块（Sky Blue） |
+| `danger` | `#4c1d24` | `#f87171` | `#fee2e2` | 风险 / 故障点 / 待下线 |
+| `warning` | `#4a3712` | `#fbbf24` | `#fef3c7` | 待治理 / 观察项 |
+| `muted` | `#1e293b` | `#334155` | `#64748b` | 弱化 / 边缘模块（仅文字降亮） |
+
+**分组容器**
+
+| variant | strokeColor | fillColor | fontColor | 其余 |
+| :--- | :--- | :--- | :--- | :--- |
+| `dashed`（默认） | `#334155` | `none` | `#94a3b8` | `dashed=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=5;` |
+| `filled` | `#334155` | `#111c33` | `#94a3b8` | 同上但 `dashed=0` |
+
+**连线**（基础 style：`edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#64748b;fontColor=#cbd5e1;` 来自 PRD §4.4.2）
+
+| style | 追加片段 |
+| :--- | :--- |
+| `solid`（默认） | `endArrow=classic;endFill=1;` |
+| `dashed` | `endArrow=classic;endFill=1;dashed=1;dashPattern=8 4;` |
+| `bidirectional` | `startArrow=classic;startFill=1;endArrow=classic;endFill=1;` |
+
+### 7.2 尺寸与字号 token（D1 / D4）
+
+| token | 值 | 用途 |
+| :--- | :--- | :--- |
+| 节点宽 | 240px（固定） | —— |
+| 标题字号 | **14px / bold** | `node.title`，居中 |
+| 描述字号 | **12px / normal** | `node.desc`，居中，紧随标题下一行 |
+| items 字号 | **12px** | `node.items`，左对齐，可等宽字体倾向 |
+| 行高 | title 20 / desc 18 / items 22 | 高度计算用 |
+| 节点内边距 | 合计 16px（上下各 8） | —— |
+| 分组内边距 | 24px | 每层分组包络时叠加 |
+| 组标题字号 | 12px / `#94a3b8` | `group.title`，容器左上角 |
+| 同级组间距 | 32px | ELK spacing |
+| 节点间距 | 同层 24px / 跨层 48px | ELK spacing |
+| 画布边距 | 40px | 自适应尺寸时外扩 |
+
+**节点高度公式**（对 PRD §4.1.2 的收敛版，消除 56/48 矛盾）
+
+```text
+height = max(48, 16 + 20 + (desc ? 18 : 0) + items.length * 22)
+```
+
+即：内边距 16 + 标题行 20 + 描述行（有则 18）+ 条目行（每条 22），并以 48px 为下限。
+覆盖验证：无 desc 无 items → 36 → 取 48 ✓（符合 D1）；有 desc 无 items → 54；无 desc 且 2 条 item → 80。
+
+**draw.io 侧落地方式**：标题字号走 cell style 的 `fontSize=14;fontStyle=1`（加粗），`desc`/`items` 用 `<font size="1">` 包裹（draw.io 渲染约 10–12px）；若实测观感与 12px 差距明显，在 M3 视觉验证阶段微调 `<font size>` 取值并回写本节。
+
+### 7.3 HTML value 结构（D4）
+
+```html
+<b>节点标题</b><br/><font size="1">节点描述（居中）</font><hr/><font size="1">rpc:OrderQuery</font><br/><font size="1">rpc:OrderCreate</font>
+```
+
+---
+
+## 8. 风险与应对
+
+| 风险 | 影响 | 应对 |
+| :--- | :--- | :--- |
+| R1 `INCLUDE_CHILDREN` 在 3 层嵌套下的坐标质量或性能不达标 | 布局不可用 | 按 T2.4 降级预案改"自底向上逐层布局"；`04-nested-groups.yaml` 作为对比基准 |
+| R2 ELK 层级布局下跨层连线路由不理想 | 连线穿模 | 组间边在 ELK 中声明端口约束；必要时改用自研正交路由器消费 ELK 坐标 |
+| R3 draw.io 对显式 `mxPoint` 折线 + `orthogonalEdgeStyle` 的处理与预期不符 | 导出与预览不一致 | M3 先用 1 个样例做 spike；不行则退化为只给 source/target 让 draw.io 自动路由 |
+| R4 HTML value 中 `<hr/>` / `<font size="1">` 渲染与设计值不符 | 卡片观感偏差 | 视觉验证阶段实测并回写 §7.2；必要时改用 `<br/>` + 下划线 |
+| R5 mxGraph 嵌套容器要求子坐标相对父、父 cell 先声明 | XML 打不开或层级错乱 | T2.6 已约定布局输出保持父相对坐标；T3.7 强制拓扑序输出，并有单测覆盖 |
+| R6 固定 240px 宽 + 长 RPC 名称溢出 | 文字被裁 | 尺寸预估器按折行数动态加高；仍溢出则回看 §7.2 是否放宽宽度 |
+| R7 pnpm 安装受网络限制 | M0 阻塞 | 备选 `npm i -g pnpm` 或改用 npm workspaces（结构不变，仅换 workspace 声明文件） |
+
+---
+
+## 9. 执行顺序速览
+
+```text
+M0 工程基线
+   │
+   ├──► M1 DSL 与校验器 ──┐
+   │                      ├──► M3 draw.io 导出 ──► M4 编排 + CLI + 端到端验证
+   └──► M2 布局引擎 ──────┘
+```
+
+每个里程碑完成后单独提交一次，便于回溯与评审。

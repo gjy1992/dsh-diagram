@@ -1,0 +1,94 @@
+version: "1.0"
+
+meta:
+  title: 剧情演出消费与编排架构
+  desc: 高密度卡片样例，items 承载模块所暴露的 RPC 接口
+  summary: 编排层驱动演出生命周期，消费层负责资源与状态
+  guide: 自上而下为一次剧情演出的完整调用链
+
+groups:
+  - id: g_orchestration
+    title: 编排层
+  - id: g_consume
+    title: 消费层
+  - id: g_infra
+    title: 基础设施
+
+nodes:
+  - id: director
+    title: 演出编排器
+    desc: 剧情时间轴与状态机
+    group: g_orchestration
+    variant: primary
+    items:
+      - rpc:StartPerformance
+      - rpc:PausePerformance
+      - rpc:SkipSegment
+      - rpc:FinishPerformance
+
+  - id: segment_scheduler
+    title: 分段调度器
+    desc: 按时间轴投递分段任务
+    group: g_orchestration
+    items:
+      - rpc:ScheduleSegment
+      - rpc:CancelSegment
+
+  - id: single_player
+    title: 单人玩法消费
+    desc: 剧情本体的实际消费方
+    group: g_consume
+    items:
+      - rpc:ConsumeSegment
+      - rpc:QueryPerformanceState
+      - rpc:ReportPlayback
+
+  - id: multi_player
+    title: 多人玩法消费
+    group: g_consume
+    variant: warning
+    items:
+      - rpc:JoinPerformance
+      - rpc:LeavePerformance
+
+  - id: resource_service
+    title: 资源服务
+    desc: 模型 / 音频 / 特效分发
+    group: g_infra
+    items:
+      - rpc:GetAssetManifest
+      - rpc:PrefetchAssets
+
+  - id: timeline_db
+    title: 时间轴存储
+    group: g_infra
+    variant: muted
+    items:
+      - rpc:SaveTimeline
+      - rpc:LoadTimeline
+
+edges:
+  - from: director
+    to: segment_scheduler
+    label: 下发时间轴
+  - from: segment_scheduler
+    to: single_player
+    label: 分段任务
+  - from: segment_scheduler
+    to: multi_player
+    label: 分段任务
+  - from: single_player
+    to: resource_service
+    label: 拉取资源
+    style: dashed
+  - from: multi_player
+    to: resource_service
+    label: 拉取资源
+    style: dashed
+  - from: director
+    to: timeline_db
+    label: 持久化
+  - from: single_player
+    to: director
+    label: 上报进度
+    style: bidirectional

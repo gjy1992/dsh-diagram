@@ -1,0 +1,24 @@
+{
+  "name": "dsh-diagram",
+  "version": "0.1.0",
+  "private": true,
+  "description": "架构图生成与 draw.io 导出（Phase 1：YAML DSL → 校验 → ELK 布局 → .drawio 明文导出）",
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "cli": "tsx packages/core/src/cli.ts",
+    "validate": "tsx packages/core/src/cli.ts validate",
+    "build:examples": "tsx packages/core/src/cli.ts build-all examples -o out",
+    "verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.18.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,29 @@
+version: "1.0"
+
+meta:
+  title: 活动报名链路概览
+  desc: dsh-diagram 最小可用样例
+  summary: 展示网关 / 业务服务 / 存储三层的基础调用关系
+  guide: 数据自上而下流动
+
+nodes:
+  - id: gateway
+    title: API 网关
+    desc: 统一入口与鉴权
+    variant: primary
+  - id: activity_service
+    title: 活动服务
+    desc: 报名与资格校验
+  - id: activity_db
+    title: 活动库
+    desc: MySQL 主从
+    variant: muted
+
+edges:
+  - from: gateway
+    to: activity_service
+    label: POST /activity/signup
+  - from: activity_service
+    to: activity_db
+    label: 写入报名记录
+    style: dashed

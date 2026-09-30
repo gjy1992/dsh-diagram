@@ -1,0 +1,30 @@
+version: "1.0"
+
+# 反例样例：故意包含多类错误，用于验证校验器诊断与 did-you-mean 提示
+# 该文件不参与 build-all（文件名含 invalid）
+
+meta:
+  title: 反例样例（预期校验失败）
+
+groups:
+  - id: g_a
+    title: 分组 A
+    parent: g_b
+  - id: g_b
+    title: 分组 B
+    parent: g_a
+
+nodes:
+  - id: single_player
+    title: 单人玩法
+    group: g_a
+  - id: single_player
+    title: 重复 ID 的节点
+  - id: match_service
+    title: 匹配服务
+    group: g_missing
+
+edges:
+  - from: single_playr
+    to: match_service
+    label: 源节点 ID 拼写错误

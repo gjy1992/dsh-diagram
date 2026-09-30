@@ -1,0 +1,122 @@
+version: "1.0"
+
+# 性能与规模化用例：50 节点 / 45 连线 / 5 个服务域
+# 每个服务域为 5 层两列的网格，域间只在末层横向互联
+# 用于验证 PRD §6 的「<= 50 节点布局耗时 < 200ms」指标
+
+meta:
+  title: 微服务群压力样例
+  desc: 50 节点规模化布局验证
+  summary: 5 个服务域，域内两路并行链路 + 域间横向互联
+  guide: 域内自上而下，域间自左向右
+
+groups:
+  - id: g_a
+    title: 用户域
+  - id: g_b
+    title: 交易域
+  - id: g_c
+    title: 内容域
+  - id: g_d
+    title: 营销域
+  - id: g_e
+    title: 数据域
+
+nodes:
+  - { id: a01, title: 用户服务 A-01, group: g_a, variant: primary }
+  - { id: a02, title: 用户服务 A-02, group: g_a, variant: primary }
+  - { id: a03, title: 用户服务 A-03, group: g_a }
+  - { id: a04, title: 用户服务 A-04, group: g_a }
+  - { id: a05, title: 用户服务 A-05, group: g_a }
+  - { id: a06, title: 用户服务 A-06, group: g_a }
+  - { id: a07, title: 用户服务 A-07, group: g_a }
+  - { id: a08, title: 用户服务 A-08, group: g_a }
+  - { id: a09, title: 用户服务 A-09, group: g_a }
+  - { id: a10, title: 用户服务 A-10, group: g_a, variant: muted }
+  - { id: b01, title: 交易服务 B-01, group: g_b, variant: primary }
+  - { id: b02, title: 交易服务 B-02, group: g_b, variant: primary }
+  - { id: b03, title: 交易服务 B-03, group: g_b }
+  - { id: b04, title: 交易服务 B-04, group: g_b }
+  - { id: b05, title: 交易服务 B-05, group: g_b }
+  - { id: b06, title: 交易服务 B-06, group: g_b }
+  - { id: b07, title: 交易服务 B-07, group: g_b }
+  - { id: b08, title: 交易服务 B-08, group: g_b }
+  - { id: b09, title: 交易服务 B-09, group: g_b }
+  - { id: b10, title: 交易服务 B-10, group: g_b, variant: muted }
+  - { id: c01, title: 内容服务 C-01, group: g_c, variant: primary }
+  - { id: c02, title: 内容服务 C-02, group: g_c, variant: primary }
+  - { id: c03, title: 内容服务 C-03, group: g_c }
+  - { id: c04, title: 内容服务 C-04, group: g_c }
+  - { id: c05, title: 内容服务 C-05, group: g_c }
+  - { id: c06, title: 内容服务 C-06, group: g_c }
+  - { id: c07, title: 内容服务 C-07, group: g_c }
+  - { id: c08, title: 内容服务 C-08, group: g_c }
+  - { id: c09, title: 内容服务 C-09, group: g_c }
+  - { id: c10, title: 内容服务 C-10, group: g_c, variant: muted }
+  - { id: d01, title: 营销服务 D-01, group: g_d, variant: primary }
+  - { id: d02, title: 营销服务 D-02, group: g_d, variant: primary }
+  - { id: d03, title: 营销服务 D-03, group: g_d }
+  - { id: d04, title: 营销服务 D-04, group: g_d }
+  - { id: d05, title: 营销服务 D-05, group: g_d }
+  - { id: d06, title: 营销服务 D-06, group: g_d }
+  - { id: d07, title: 营销服务 D-07, group: g_d }
+  - { id: d08, title: 营销服务 D-08, group: g_d }
+  - { id: d09, title: 营销服务 D-09, group: g_d }
+  - { id: d10, title: 营销服务 D-10, group: g_d, variant: muted }
+  - { id: e01, title: 数据服务 E-01, group: g_e, variant: primary }
+  - { id: e02, title: 数据服务 E-02, group: g_e, variant: primary }
+  - { id: e03, title: 数据服务 E-03, group: g_e }
+  - { id: e04, title: 数据服务 E-04, group: g_e }
+  - { id: e05, title: 数据服务 E-05, group: g_e }
+  - { id: e06, title: 数据服务 E-06, group: g_e }
+  - { id: e07, title: 数据服务 E-07, group: g_e }
+  - { id: e08, title: 数据服务 E-08, group: g_e }
+  - { id: e09, title: 数据服务 E-09, group: g_e }
+  - { id: e10, title: 数据服务 E-10, group: g_e, variant: muted }
+
+edges:
+  - { from: a01, to: a03, label: 链路 }
+  - { from: a02, to: a04, label: 链路 }
+  - { from: a03, to: a05, label: 链路 }
+  - { from: a04, to: a06, label: 链路 }
+  - { from: a05, to: a07, label: 链路 }
+  - { from: a06, to: a08, label: 链路 }
+  - { from: a07, to: a09, label: 链路 }
+  - { from: a08, to: a10, label: 链路 }
+  - { from: b01, to: b03, label: 链路 }
+  - { from: b02, to: b04, label: 链路 }
+  - { from: b03, to: b05, label: 链路 }
+  - { from: b04, to: b06, label: 链路 }
+  - { from: b05, to: b07, label: 链路 }
+  - { from: b06, to: b08, label: 链路 }
+  - { from: b07, to: b09, label: 链路 }
+  - { from: b08, to: b10, label: 链路 }
+  - { from: c01, to: c03, label: 链路 }
+  - { from: c02, to: c04, label: 链路 }
+  - { from: c03, to: c05, label: 链路 }
+  - { from: c04, to: c06, label: 链路 }
+  - { from: c05, to: c07, label: 链路 }
+  - { from: c06, to: c08, label: 链路 }
+  - { from: c07, to: c09, label: 链路 }
+  - { from: c08, to: c10, label: 链路 }
+  - { from: d01, to: d03, label: 链路 }
+  - { from: d02, to: d04, label: 链路 }
+  - { from: d03, to: d05, label: 链路 }
+  - { from: d04, to: d06, label: 链路 }
+  - { from: d05, to: d07, label: 链路 }
+  - { from: d06, to: d08, label: 链路 }
+  - { from: d07, to: d09, label: 链路 }
+  - { from: d08, to: d10, label: 链路 }
+  - { from: e01, to: e03, label: 链路 }
+  - { from: e02, to: e04, label: 链路 }
+  - { from: e03, to: e05, label: 链路 }
+  - { from: e04, to: e06, label: 链路 }
+  - { from: e05, to: e07, label: 链路 }
+  - { from: e06, to: e08, label: 链路 }
+  - { from: e07, to: e09, label: 链路 }
+  - { from: e08, to: e10, label: 链路 }
+  - { from: a09, to: b10, label: 跨域, style: dashed }
+  - { from: b09, to: c10, label: 跨域, style: dashed }
+  - { from: c09, to: d10, label: 跨域, style: dashed }
+  - { from: d09, to: e10, label: 跨域, style: dashed }
+  - { from: e09, to: a10, label: 回流, style: bidirectional }

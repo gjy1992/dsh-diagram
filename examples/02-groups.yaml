@@ -1,0 +1,74 @@
+version: "1.0"
+
+meta:
+  title: 直播送礼消费架构
+  desc: 单层分组与 variant 语义色用法
+  summary: 客户端 → BFF → 后端服务群
+  guide: 连线方向即调用方向
+
+groups:
+  - id: g_client
+    title: 客户端
+    variant: filled
+  - id: g_bff
+    title: BFF 层
+  - id: g_backend
+    title: 后端服务群
+
+nodes:
+  - id: app
+    title: App 客户端
+    desc: iOS / Android
+    group: g_client
+    variant: primary
+  - id: web
+    title: Web 直播间
+    group: g_client
+    variant: muted
+
+  - id: gift_bff
+    title: 送礼 BFF
+    desc: 协议转换与聚合
+    group: g_bff
+    variant: primary
+
+  - id: risk_service
+    title: 风控服务
+    desc: 大额送礼实时拦截
+    group: g_backend
+    variant: warning
+  - id: pay_service
+    title: 支付服务
+    group: g_backend
+  - id: ledger_service
+    title: 账务服务
+    desc: 待迁移至新账务
+    group: g_backend
+    variant: danger
+  - id: notify_service
+    title: 消息服务
+    group: g_backend
+    variant: muted
+
+edges:
+  - from: app
+    to: gift_bff
+    label: POST /gift/send
+  - from: web
+    to: gift_bff
+    label: ws 送礼
+    style: dashed
+  - from: gift_bff
+    to: risk_service
+    label: 风控校验
+  - from: gift_bff
+    to: pay_service
+    label: 发起扣款
+    style: bidirectional
+  - from: pay_service
+    to: ledger_service
+    label: 记账
+  - from: pay_service
+    to: notify_service
+    label: 送礼广播
+    style: dashed

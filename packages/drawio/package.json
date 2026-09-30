@@ -1,0 +1,15 @@
+{
+  "name": "@dsh-diagram/drawio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "dsh-diagram draw.io (mxGraphModel) XML 生成器",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@dsh-diagram/layout": "workspace:*",
+    "@dsh-diagram/schema": "workspace:*"
+  }
+}
