@@ -40,7 +40,7 @@
 | Node.js | 已装 v22.14.0 | 无需处理 |
 | npm | 已装 11.1.0 | 仅用于安装 pnpm |
 | **pnpm** | **未安装** | ✅ 已通过 corepack 固定 **pnpm 11.7.0**（root `packageManager` 字段）。注意：本机 corepack 0.31.0 与 pnpm 12.x 的新 bin 布局（`bin/pnpm.mjs`）不兼容，会报 `Cannot find module .../bin/pnpm.cjs`，故不能直接用 latest。 |
-| git | 已装 2.42.0，仓库已 `git init` | baseline 提交待确认 |
+| git | 已装 2.42.0，仓库已 `git init` | ✅ baseline 提交已完成（`7b7b71a`，39 files） |
 | dsh 宿主 / 插件 SDK | 本机不存在 | 本期不依赖，故不影响交付 |
 | draw.io 桌面版 | `%LOCALAPPDATA%\Programs\draw.io\draw.io.exe`（文件名带点，不是 `drawio.exe`） | 用于 `.drawio` → PNG 功能级验证 |
 
