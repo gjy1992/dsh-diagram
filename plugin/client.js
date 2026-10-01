@@ -30,7 +30,10 @@ __export(client_exports, {
   default: () => client_default
 });
 module.exports = __toCommonJS(client_exports);
-var import_react2 = require("react");
+var import_react4 = require("react");
+
+// plugin/src/diagram/DiagramCanvas.tsx
+var import_react = require("react");
 
 // packages/drawio/src/style-map.ts
 var NODE_THEME = {
@@ -4858,9 +4861,6 @@ function buildDrawio(input) {
   };
 }
 
-// plugin/src/diagram/DiagramCanvas.tsx
-var import_react = require("react");
-
 // plugin/src/diagram/scene.ts
 var SVG_PALETTE = {
   background: "#0f172a",
@@ -5051,6 +5051,7 @@ var MIN_ZOOM = 0.1;
 var MAX_ZOOM = 4;
 var MIN_VIEWPORT_HEIGHT = 160;
 var MAX_VIEWPORT_HEIGHT = 440;
+var PREVIEW_VIEWPORT_HEIGHT = 240;
 var FONT_STACK = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
 var styles = {
   shell: {
@@ -5102,7 +5103,7 @@ var styles = {
 function clampZoom(k) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, k));
 }
-function DiagramCanvas({ scene, fileName, onDownload, labels, idPrefix }) {
+function DiagramCanvas({ scene, fileName, onDownload, labels, idPrefix, variant = "card" }) {
   const hostRef = (0, import_react.useRef)(null);
   const [hostWidth, setHostWidth] = (0, import_react.useState)(0);
   const [view, setView] = (0, import_react.useState)({ k: 1, x: 0, y: 0 });
@@ -5114,9 +5115,10 @@ function DiagramCanvas({ scene, fileName, onDownload, labels, idPrefix }) {
   const vx = scene.viewBox.x;
   const vy = scene.viewBox.y;
   const fitWidthScale = hostWidth > 0 ? Math.min(1, hostWidth / contentW) : 1;
+  const maxViewportHeight = variant === "preview" ? PREVIEW_VIEWPORT_HEIGHT : MAX_VIEWPORT_HEIGHT;
   const viewportHeight = Math.max(
     MIN_VIEWPORT_HEIGHT,
-    Math.min(MAX_VIEWPORT_HEIGHT, Math.round(contentH * fitWidthScale))
+    Math.min(maxViewportHeight, Math.round(contentH * fitWidthScale))
   );
   (0, import_react.useEffect)(() => {
     const host = hostRef.current;
@@ -5386,14 +5388,265 @@ function DiagramCanvas({ scene, fileName, onDownload, labels, idPrefix }) {
       }, children: labels.fitAll }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: styles.button, title: fileName, onClick: onDownload, children: labels.download })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.hint, children: "\u6EDA\u8F6E\u7F29\u653E \xB7 \u62D6\u52A8\u5E73\u79FB \xB7 \u60AC\u505C\u8282\u70B9\u9AD8\u4EAE\u8FDE\u7EBF" })
+    variant === "card" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.hint, children: "\u6EDA\u8F6E\u7F29\u653E \xB7 \u62D6\u52A8\u5E73\u79FB \xB7 \u60AC\u505C\u8282\u70B9\u9AD8\u4EAE\u8FDE\u7EBF" })
   ] });
 }
 
-// plugin/src/client.tsx
+// plugin/src/diagram/model.ts
+var import_react2 = require("react");
+function asArchSpec(value) {
+  if (typeof value !== "object" || value === null) throw new Error("YAML \u9876\u5C42\u4E0D\u662F\u5BF9\u8C61");
+  const candidate = value;
+  if (!Array.isArray(candidate.nodes) || !Array.isArray(candidate.edges)) {
+    throw new Error("\u7F3A\u5C11 nodes / edges \u6570\u7EC4");
+  }
+  return value;
+}
+async function buildDiagramModel(yamlSpec, title) {
+  const parsed = parseYaml(yamlSpec);
+  if (!parsed.ok) throw new Error(parsed.diagnostics[0]?.message ?? "YAML \u89E3\u6790\u5931\u8D25");
+  const spec = normalizeSpec(asArchSpec(parsed.value));
+  const layout = await layoutSpec(spec);
+  const scene = buildScene(layout, spec);
+  return { scene, spec, layout, title: title !== "" ? title : spec.meta.title ?? "" };
+}
+function downloadDrawio(model) {
+  const artifact = buildDrawio({
+    title: model.title === "" ? "diagram" : model.title,
+    spec: model.spec,
+    layout: model.layout
+  });
+  const blob = new Blob([artifact.xml], { type: "application/xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = artifact.fileName;
+  anchor.rel = "noopener";
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1e3);
+  return artifact.fileName;
+}
+function useDiagramModel(yamlSpec, title) {
+  const [model, setModel] = (0, import_react2.useState)(null);
+  const [error, setError] = (0, import_react2.useState)(null);
+  (0, import_react2.useEffect)(() => {
+    if (yamlSpec === "") {
+      setModel(null);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setError(null);
+    void (async () => {
+      try {
+        const next = await buildDiagramModel(yamlSpec, title);
+        if (!cancelled) setModel(next);
+      } catch (cause) {
+        if (cancelled) return;
+        setModel(null);
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [yamlSpec, title]);
+  return { model, error };
+}
+
+// plugin/src/diagram/TurnPreview.tsx
+var import_react3 = require("react");
+
+// plugin/src/diagram/turn-diagrams.ts
+var DIAGRAM_TURN_KIND = "dshDiagramTurn";
+var DIAGRAM_TURN_DATA_KEY = "dshDiagramTurn";
+var TRACKED_TOOLS = ["render_architecture", "yaml_to_drawio"];
+function asRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+}
+function parseArguments(raw) {
+  if (typeof raw !== "string" || raw === "") return void 0;
+  try {
+    return asRecord(JSON.parse(raw));
+  } catch {
+    return void 0;
+  }
+}
+var diagramTurnDefinition = {
+  kind: DIAGRAM_TURN_KIND,
+  match(event) {
+    const turn = asRecord(event.data)?.turn;
+    if (typeof turn !== "number") return null;
+    if (event.type === "turn/start") return { id: String(turn), role: "start" };
+    if (event.type === "tool/call" || event.type === "tool/result") return { id: String(turn), role: "update" };
+    return null;
+  },
+  start(_context, match) {
+    const turn = asRecord(match.event.data)?.turn;
+    return { turn: typeof turn === "number" ? turn : 0, pending: {}, diagrams: [] };
+  },
+  update(context, match) {
+    const state = context.state;
+    const data = asRecord(match.event.data);
+    if (state === void 0 || data === void 0) {
+      return { turn: 0, pending: {}, diagrams: [] };
+    }
+    if (match.event.type === "tool/call") {
+      const callId = typeof data.callId === "string" ? data.callId : void 0;
+      const name = typeof data.name === "string" ? data.name : void 0;
+      if (callId === void 0 || name === void 0 || !TRACKED_TOOLS.includes(name)) return state;
+      const args = parseArguments(data.arguments);
+      return {
+        ...state,
+        pending: {
+          ...state.pending,
+          [callId]: {
+            title: typeof args?.title === "string" ? args.title : "",
+            yamlSpec: typeof args?.yaml_spec === "string" ? args.yaml_spec : ""
+          }
+        }
+      };
+    }
+    if (match.event.type === "tool/result") {
+      const callId = asRecord(data.message)?.toolCallId;
+      if (typeof callId !== "string") return state;
+      const pending = state.pending[callId];
+      if (pending === void 0) return state;
+      const meta = asRecord(data.meta);
+      const yamlSpec = pending.yamlSpec !== "" ? pending.yamlSpec : typeof meta?.yaml_spec === "string" ? meta.yaml_spec : "";
+      const rest = { ...state.pending };
+      delete rest[callId];
+      if (yamlSpec === "") return { ...state, pending: rest };
+      const fileName = typeof meta?.file_name === "string" ? meta.file_name.replace(/\.drawio$/i, "") : "";
+      return {
+        ...state,
+        pending: rest,
+        diagrams: [...state.diagrams, {
+          callId,
+          title: pending.title !== "" ? pending.title : fileName,
+          yamlSpec
+        }]
+      };
+    }
+    return state;
+  },
+  buildLocationData(context, scope) {
+    const state = context.state;
+    if (scope !== "turn" || state === void 0 || state.diagrams.length === 0) return null;
+    return {
+      kind: "turn",
+      turn: state.turn,
+      key: DIAGRAM_TURN_DATA_KEY,
+      value: { diagrams: state.diagrams }
+    };
+  }
+};
+function selectTurnDiagrams(owner) {
+  const value = asRecord(owner.turn.data.get(DIAGRAM_TURN_DATA_KEY));
+  const diagrams = value?.diagrams;
+  if (!Array.isArray(diagrams)) return [];
+  return diagrams;
+}
+
+// plugin/src/diagram/TurnPreview.tsx
 var import_jsx_runtime2 = require("react/jsx-runtime");
+var styles2 = {
+  wrap: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    marginTop: "10px"
+  },
+  item: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    padding: "8px 10px",
+    border: "1px solid var(--dsw-alias-border-l1)",
+    borderRadius: "10px",
+    background: "var(--dsw-alias-bg-layer-1)"
+  },
+  head: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: "12px",
+    color: "var(--dsw-alias-label-primary)"
+  },
+  dot: {
+    width: "7px",
+    height: "7px",
+    borderRadius: "50%",
+    flex: "0 0 auto",
+    background: "var(--dsw-alias-state-success-primary)"
+  },
+  name: { fontWeight: 600, flex: "0 0 auto" },
+  summary: {
+    flex: "1 1 auto",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    color: "var(--dsw-alias-label-secondary)"
+  },
+  button: {
+    flex: "0 0 auto",
+    border: "1px solid var(--dsw-alias-border-l1)",
+    background: "transparent",
+    color: "var(--dsw-alias-label-secondary)",
+    cursor: "pointer",
+    fontSize: "12px",
+    lineHeight: 1.4,
+    padding: "1px 7px",
+    borderRadius: "6px"
+  },
+  note: { fontSize: "12px", color: "var(--dsw-alias-state-error-primary)" }
+};
+function TurnDiagramItem({ diagram, labels }) {
+  const { model, error } = useDiagramModel(diagram.yamlSpec, diagram.title);
+  const onDownload = (0, import_react3.useCallback)(() => {
+    if (model === null) return;
+    try {
+      downloadDrawio(model);
+    } catch (cause) {
+      console.error("[dsh-diagram] \u56DE\u5408\u9884\u89C8\u5BFC\u51FA .drawio \u5931\u8D25:", cause);
+    }
+  }, [model]);
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: styles2.item, "data-dsh-diagram-turn-preview": "", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: styles2.head, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: styles2.dot, "aria-hidden": true }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: styles2.name, children: labels.title }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: styles2.summary, children: diagram.title !== "" ? diagram.title : model?.title ?? "" }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", style: styles2.button, onClick: onDownload, children: labels.download })
+    ] }),
+    model !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+      DiagramCanvas,
+      {
+        scene: model.scene,
+        fileName: model.title,
+        onDownload,
+        labels,
+        idPrefix: `dsh-diagram-turn-${diagram.callId}`,
+        variant: "preview"
+      }
+    ),
+    error !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: styles2.note, children: [
+      labels.failed,
+      ": ",
+      error
+    ] })
+  ] });
+}
+function TurnPreview({ turn, labels }) {
+  const diagrams = selectTurnDiagrams({ turn });
+  if (diagrams.length === 0) return null;
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: styles2.wrap, children: diagrams.map((diagram) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(TurnDiagramItem, { diagram, labels }, diagram.callId)) });
+}
+
+// plugin/src/client.tsx
+var import_jsx_runtime3 = require("react/jsx-runtime");
 var NS = "dsh-diagram";
 var TOOL_NAMES = ["render_architecture", "yaml_to_drawio"];
+var TURN_PREVIEW_ID = "dsh-diagram-turn-preview";
 var zh = {
   title: "\u67B6\u6784\u56FE",
   preparing: "\u6B63\u5728\u8BFB\u53D6\u53C2\u6570\u2026",
@@ -5405,6 +5658,7 @@ var zh = {
   saved: "\u5DF2\u843D\u76D8\u5230",
   reparseFailed: "\u5361\u7247\u65E0\u6CD5\u91CD\u7B97\u5E03\u5C40\uFF08\u5BBF\u4E3B\u5DF2\u901A\u8FC7\u6821\u9A8C\uFF0C\u8FD9\u662F\u9884\u89C8\u4FA7\u7684\u95EE\u9898\uFF09",
   metaMissing: "\u5361\u7247\u8BFB\u4E0D\u5230 YAML\uFF1A\u6587\u4EF6\u7EA7\u5DE5\u5177\u7684 meta \u6CA1\u9001\u8FBE\uFF08\u7ECF run_code \u5D4C\u5957\u8C03\u7528\u65F6\u4F1A\u8FD9\u6837\uFF09\u3002\u8BF7\u5C55\u5F00\u300C\u8BE6\u60C5\u300D\u67E5\u770B\u5BBF\u4E3B\u8FD4\u56DE\u7684\u6458\u8981\u4E0E\u843D\u76D8\u8DEF\u5F84\u3002",
+  turnTitle: "\u672C\u56DE\u5408\u67B6\u6784\u56FE",
   fitWidth: "\u9002\u5E94\u5BBD\u5EA6",
   fitAll: "\u6574\u56FE",
   zoomIn: "\u653E\u5927",
@@ -5424,6 +5678,7 @@ var en = {
   saved: "Saved to",
   reparseFailed: "The card could not re-derive the layout (the host validated it; this is a preview-side problem)",
   metaMissing: "The card cannot read the YAML: the file-tool meta did not reach the client (this happens for run_code sub-calls). Expand Details for the host summary and saved path.",
+  turnTitle: "Diagrams in this turn",
   fitWidth: "Fit width",
   fitAll: "Whole diagram",
   zoomIn: "Zoom in",
@@ -5432,7 +5687,7 @@ var en = {
   unit: "nodes",
   link: "edges"
 };
-function asRecord(value) {
+function asRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
 }
 function flatten(content) {
@@ -5451,7 +5706,7 @@ function readSlice(block) {
     } catch {
     }
   }
-  const meta = settled ? asRecord(block.meta) : void 0;
+  const meta = settled ? asRecord2(block.meta) : void 0;
   const yamlSpec = argsYaml !== "" ? argsYaml : typeof meta?.yaml_spec === "string" ? meta.yaml_spec : "";
   const savedPath = typeof meta?.saved_path === "string" ? meta.saved_path : null;
   const result = settled ? flatten(block.content ?? []) : null;
@@ -5459,15 +5714,7 @@ function readSlice(block) {
   const state = !settled ? block.phase === "preparing" ? "preparing" : "running" : isError ? "error" : "ok";
   return { argsRaw, yamlSpec, title, result, savedPath, isError, state };
 }
-function asArchSpec(value) {
-  if (typeof value !== "object" || value === null) throw new Error("YAML \u9876\u5C42\u4E0D\u662F\u5BF9\u8C61");
-  const candidate = value;
-  if (!Array.isArray(candidate.nodes) || !Array.isArray(candidate.edges)) {
-    throw new Error("\u7F3A\u5C11 nodes / edges \u6570\u7EC4");
-  }
-  return value;
-}
-var styles2 = {
+var styles3 = {
   row: {
     display: "flex",
     flexDirection: "column",
@@ -5537,58 +5784,17 @@ function stateColor(state) {
 function DiagramCard(props) {
   const { callId, block, t } = props;
   const slice = readSlice(block);
-  const [open, setOpen] = (0, import_react2.useState)(false);
-  const [model, setModel] = (0, import_react2.useState)(null);
-  const [modelError, setModelError] = (0, import_react2.useState)(null);
-  const yamlSpec = slice.yamlSpec;
-  const title = slice.title;
-  (0, import_react2.useEffect)(() => {
-    if (yamlSpec === "") {
-      setModel(null);
-      setModelError(null);
-      return;
-    }
-    let cancelled = false;
-    setModelError(null);
-    void (async () => {
-      try {
-        const parsed = parseYaml(yamlSpec);
-        if (!parsed.ok) throw new Error(parsed.diagnostics[0]?.message ?? "YAML \u89E3\u6790\u5931\u8D25");
-        const spec = normalizeSpec(asArchSpec(parsed.value));
-        const layout = await layoutSpec(spec);
-        const scene = buildScene(layout, spec);
-        if (!cancelled) setModel({ scene, spec, layout, title: title !== "" ? title : spec.meta.title ?? "" });
-      } catch (error) {
-        if (cancelled) return;
-        setModel(null);
-        setModelError(error instanceof Error ? error.message : String(error));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [yamlSpec, title]);
-  const onDownload = (0, import_react2.useCallback)(() => {
+  const [open, setOpen] = (0, import_react4.useState)(false);
+  const { model, error: modelError } = useDiagramModel(slice.yamlSpec, slice.title);
+  const onDownload = (0, import_react4.useCallback)(() => {
     if (model === null) return;
     try {
-      const artifact = buildDrawio({
-        title: model.title === "" ? "diagram" : model.title,
-        spec: model.spec,
-        layout: model.layout
-      });
-      const blob = new Blob([artifact.xml], { type: "application/xml;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = artifact.fileName;
-      anchor.rel = "noopener";
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1e3);
+      downloadDrawio(model);
     } catch (error) {
       console.error("[dsh-diagram] \u5BFC\u51FA .drawio \u5931\u8D25:", error);
     }
   }, [model]);
-  const labels = (0, import_react2.useMemo)(() => ({
+  const labels = (0, import_react4.useMemo)(() => ({
     fitWidth: t("fitWidth"),
     fitAll: t("fitAll"),
     zoomIn: t("zoomIn"),
@@ -5597,19 +5803,19 @@ function DiagramCard(props) {
   }), [t]);
   const statusText = slice.state === "preparing" ? t("preparing") : slice.state === "running" ? t("running") : slice.state === "error" ? t("failed") : t("done");
   const counts = model === null ? "" : `${model.layout.nodes.length} ${t("unit")} \xB7 ${model.layout.edges.length} ${t("link")}`;
-  const summary = [counts, title !== "" ? title : model?.title ?? ""].filter((part) => part !== "").join(" \xB7 ");
+  const summary = [counts, slice.title !== "" ? slice.title : model?.title ?? ""].filter((part) => part !== "").join(" \xB7 ");
   const details = slice.result ?? slice.argsRaw ?? "";
   const canRender = model !== null;
-  const metaMissing = slice.state !== "preparing" && slice.state !== "error" && yamlSpec === "";
-  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: styles2.row, "data-dsh-diagram-card": props.toolName ?? "render_architecture", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: styles2.head, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { ...styles2.dot, background: stateColor(slice.state) }, "aria-hidden": true }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: styles2.name, children: t("title") }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: styles2.summary, children: summary === "" ? statusText : summary }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { ...styles2.status, color: stateColor(slice.state) }, children: statusText }),
-      details !== "" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", style: styles2.toggle, onClick: () => setOpen((value) => !value), children: open ? t("hide") : t("detail") })
+  const metaMissing = slice.state !== "preparing" && slice.state !== "error" && slice.yamlSpec === "";
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: styles3.row, "data-dsh-diagram-card": props.toolName ?? "render_architecture", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: styles3.head, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { ...styles3.dot, background: stateColor(slice.state) }, "aria-hidden": true }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: styles3.name, children: t("title") }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: styles3.summary, children: summary === "" ? statusText : summary }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { ...styles3.status, color: stateColor(slice.state) }, children: statusText }),
+      details !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("button", { type: "button", style: styles3.toggle, onClick: () => setOpen((value) => !value), children: open ? t("hide") : t("detail") })
     ] }),
-    canRender && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+    canRender && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
       DiagramCanvas,
       {
         scene: model.scene,
@@ -5619,21 +5825,48 @@ function DiagramCard(props) {
         idPrefix: `dsh-diagram-${callId ?? "call"}`
       }
     ),
-    slice.savedPath !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: styles2.saved, title: slice.savedPath, children: [
+    slice.savedPath !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: styles3.saved, title: slice.savedPath, children: [
       t("saved"),
       " ",
       slice.savedPath
     ] }),
-    slice.state === "error" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("pre", { style: { ...styles2.body, color: "var(--dsw-alias-state-error-primary)" }, children: slice.result ?? "" }),
-    metaMissing && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: styles2.note, children: t("metaMissing") }),
-    modelError !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: styles2.note, children: [
+    slice.state === "error" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("pre", { style: { ...styles3.body, color: "var(--dsw-alias-state-error-primary)" }, children: slice.result ?? "" }),
+    metaMissing && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: styles3.note, children: t("metaMissing") }),
+    modelError !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: styles3.note, children: [
       t("reparseFailed"),
       ": ",
       modelError
     ] }),
-    slice.state !== "error" && model === null && modelError === null && !metaMissing && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: styles2.note, children: statusText }),
-    open && details !== "" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("pre", { style: styles2.body, children: details })
+    slice.state !== "error" && model === null && modelError === null && !metaMissing && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: styles3.note, children: statusText }),
+    open && details !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("pre", { style: styles3.body, children: details })
   ] });
+}
+function previewLabels(t) {
+  return {
+    title: t("turnTitle"),
+    download: t("download"),
+    fitWidth: t("fitWidth"),
+    fitAll: t("fitAll"),
+    zoomIn: t("zoomIn"),
+    zoomOut: t("zoomOut"),
+    failed: t("failed")
+  };
+}
+function registerTurnPreview(ctx, t) {
+  const labels = previewLabels(t);
+  ctx.inject(["uiConversation"], (scoped) => {
+    const uiConversation = scoped.get("uiConversation");
+    if (uiConversation?.events === void 0) return;
+    try {
+      uiConversation.events.register(diagramTurnDefinition);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("already registered")) throw error;
+    }
+    scoped.slots.inject("conversation.chat.turnTail", () => scoped.slots.register(
+      { name: "conversation.chat.turnTail", id: TURN_PREVIEW_ID, order: 50, locale: NS },
+      (owner) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(TurnPreview, { turn: owner.turn, labels })
+    ));
+  });
 }
 var client_default = {
   inject: ["slots", "locale"],
@@ -5644,10 +5877,11 @@ var client_default = {
       for (const key of TOOL_NAMES) {
         yield ctx.slots.register(
           { name: "tool.call.toolview", key, locale: NS },
-          (props) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(DiagramCard, { ...props, t })
+          (props) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(DiagramCard, { ...props, t })
         );
       }
     });
+    registerTurnPreview(ctx, t);
   }
 };
 

@@ -39,12 +39,19 @@ export interface DiagramCanvasProps {
   labels: DiagramCanvasLabels
   /** SVG marker 的 DOM id 前缀：同一页面可能有多张卡片，id 必须唯一 */
   idPrefix: string
+  /**
+   * 可视高度上限。卡片用缺省 440；回合末尾预览用更小的值，
+   * 免得一个回合里两张图把对话撑得很长（`preview` 同时隐藏操作提示行）。
+   */
+  variant?: 'card' | 'preview'
 }
 
 const MIN_ZOOM = 0.1
 const MAX_ZOOM = 4
 const MIN_VIEWPORT_HEIGHT = 160
 const MAX_VIEWPORT_HEIGHT = 440
+/** 回合末尾预览的可视高度上限（比卡片矮，且不再向下压缩）。 */
+const PREVIEW_VIEWPORT_HEIGHT = 240
 
 const FONT_STACK = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif'
 
@@ -106,7 +113,7 @@ function clampZoom(k: number): number {
  * @param props - 场景、下载回调、文案与 marker id 前缀。
  * @returns 带工具条的 SVG 画布。
  */
-export function DiagramCanvas({ scene, fileName, onDownload, labels, idPrefix }: DiagramCanvasProps) {
+export function DiagramCanvas({ scene, fileName, onDownload, labels, idPrefix, variant = 'card' }: DiagramCanvasProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const [hostWidth, setHostWidth] = useState(0)
   const [view, setView] = useState<View>({ k: 1, x: 0, y: 0 })
@@ -119,9 +126,10 @@ export function DiagramCanvas({ scene, fileName, onDownload, labels, idPrefix }:
   const vx = scene.viewBox.x
   const vy = scene.viewBox.y
   const fitWidthScale = hostWidth > 0 ? Math.min(1, hostWidth / contentW) : 1
+  const maxViewportHeight = variant === 'preview' ? PREVIEW_VIEWPORT_HEIGHT : MAX_VIEWPORT_HEIGHT
   const viewportHeight = Math.max(
     MIN_VIEWPORT_HEIGHT,
-    Math.min(MAX_VIEWPORT_HEIGHT, Math.round(contentH * fitWidthScale)),
+    Math.min(maxViewportHeight, Math.round(contentH * fitWidthScale)),
   )
 
   // 量容器宽度：卡片宽度随对话列变化，量不到就先按 1:1 渲染，量到后自动落位。
@@ -393,7 +401,7 @@ export function DiagramCanvas({ scene, fileName, onDownload, labels, idPrefix }:
         <button type="button" style={styles.button} onClick={() => { userAdjusted.current = true; setView(fitAll()) }}>{labels.fitAll}</button>
         <button type="button" style={styles.button} title={fileName} onClick={onDownload}>{labels.download}</button>
       </div>
-      <div style={styles.hint}>滚轮缩放 · 拖动平移 · 悬停节点高亮连线</div>
+      {variant === 'card' && <div style={styles.hint}>滚轮缩放 · 拖动平移 · 悬停节点高亮连线</div>}
     </div>
   )
 }

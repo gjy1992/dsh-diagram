@@ -1,38 +1,37 @@
 /**
  * dsh-diagram · 客户端半（浏览器）。
  *
- * 命中 keyed slot `tool.call.toolview` 的 `render_architecture` / `yaml_to_drawio` 后，
- * 本视图**接管整行**（通用工具行不再渲染），所以它自己也负责行头。
+ * 三件事：
+ *   ① keyed toolview（`render_architecture` / `yaml_to_drawio`）—— 接管工具调用那一行，
+ *      从**调用参数或 `tool/result.meta`** 拿到 YAML，现场重算并画出深色 SVG 卡片；
+ *   ② conversation 事件定义 —— 把本回合产出的图折进 `TurnLocation.data`；
+ *   ③ `conversation.chat.turnTail` 条目 —— 在**回合末尾**再摆一次本轮图。
+ *      ②③ 合起来解决「工具行被 step 折叠行收起后看不见图」：折叠行属 ui-chat
+ *      （`shadows-shipped-ui`），插件不该去改宿主的默认折叠行为，只旁路。
  *
  * 数据来源只有「原始调用参数 + 结果内容 + 失败状态 + 持久 meta」——与官方口径一致
- * （built-in Web Client 不消费宿主 presentCall/presentResult）。这意味着：
- * ① 零上下文开销：坐标/YAML 都不靠宿主塞进 tool result 的**文本**；
- * ② replay / fork 之后照样能画：YAML 在现场重算，不依赖宿主内存状态。
+ * （built-in Web Client 不消费宿主 presentCall/presentResult）。因此：
+ *   - 零上下文开销：坐标/YAML 都不靠宿主塞进 tool result 的**文本**；
+ *   - replay / fork 之后照样能画：YAML 现场重算，不依赖宿主内存状态。
  *
- * 两个 key 的差别只在 YAML 从哪来：
- *   - `render_architecture`：模型内联写 YAML，参数里就有 `yaml_spec`；
- *   - `yaml_to_drawio`：参数只有文件 `path`，浏览器读不到磁盘，YAML 由宿主经
- *     `presentationMeta → tool/result.meta` 投递（不进模型上下文）。
- *     注意 PTC 下经 `run_code` 派发的子调用**拿不到 meta**（宿主对子调用跳过投影器），
- *     所以那条路径必须优雅降级成一行说明，而不是空白卡片。
- *
- * 管线（全在浏览器里跑，不含 Ajv —— 见 packages/schema/src/browser.ts）：
- *   parseYaml → normalizeSpec → layoutSpec → buildScene → <DiagramCanvas>
- * 下载按钮走同一个引擎的 `buildDrawio`，因此预览与导出的几何逐点一致。
+ * 客户端半刻意**不 import 任何 dsh 客户端包**：类型检查（`pnpm typecheck:plugin`）
+ * 只映射了 cordis / dsh-tools / react，这里以最小结构声明用到的槽位与事件契约，
+ * 并由 inspect 到的槽位目录与 `dsh-univer-office` 的同类实现校对。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { buildDrawio } from '@dsh-diagram/drawio'
-import { layoutSpec, type LayoutResult } from '@dsh-diagram/layout'
-import { normalizeSpec, parseYaml } from '@dsh-diagram/schema/browser'
-import type { ArchSpec, NormalizedSpec } from '@dsh-diagram/schema/browser'
+import { useCallback, useMemo, useState } from 'react'
 import { DiagramCanvas } from './diagram/DiagramCanvas'
-import { buildScene, type DiagramScene } from './diagram/scene'
+import { downloadDrawio, useDiagramModel } from './diagram/model'
+import { TurnPreview } from './diagram/TurnPreview'
+import { diagramTurnDefinition, type TurnOwnerProps } from './diagram/turn-diagrams'
 
 /** 客户端 locale 命名空间（与 ctx.locale.register 的第一个参数一致）。 */
 const NS = 'dsh-diagram'
 
-/** 本视图接管的两个 wire 工具名（也是 slot key）。 */
+/** 本视图接管的两个 wire 工具名（也是 toolview 的 slot key）。 */
 const TOOL_NAMES = ['render_architecture', 'yaml_to_drawio'] as const
+
+/** turnTail 条目的 id（list 槽：新 id 追加一个条目）。 */
+const TURN_PREVIEW_ID = 'dsh-diagram-turn-preview'
 
 const zh = {
   title: '架构图',
@@ -45,6 +44,7 @@ const zh = {
   saved: '已落盘到',
   reparseFailed: '卡片无法重算布局（宿主已通过校验，这是预览侧的问题）',
   metaMissing: '卡片读不到 YAML：文件级工具的 meta 没送达（经 run_code 嵌套调用时会这样）。请展开「详情」查看宿主返回的摘要与落盘路径。',
+  turnTitle: '本回合架构图',
   fitWidth: '适应宽度',
   fitAll: '整图',
   zoomIn: '放大',
@@ -65,6 +65,7 @@ const en = {
   saved: 'Saved to',
   reparseFailed: 'The card could not re-derive the layout (the host validated it; this is a preview-side problem)',
   metaMissing: 'The card cannot read the YAML: the file-tool meta did not reach the client (this happens for run_code sub-calls). Expand Details for the host summary and saved path.',
+  turnTitle: 'Diagrams in this turn',
   fitWidth: 'Fit width',
   fitAll: 'Whole diagram',
   zoomIn: 'Zoom in',
@@ -87,13 +88,6 @@ interface CallSlice {
   savedPath: string | null
   isError: boolean
   state: 'preparing' | 'running' | 'ok' | 'error'
-}
-
-interface DiagramModel {
-  scene: DiagramScene
-  spec: NormalizedSpec
-  layout: LayoutResult
-  title: string
 }
 
 /** 只把普通对象当记录看：null / 数组 / 标量一律 undefined。 */
@@ -137,7 +131,7 @@ function readSlice(block: {
     }
   }
 
-  // 文件级工具的参数里只有 path —— YAML 只能从 meta 走（见文件头注释）。
+  // 文件级工具的参数里只有 path —— YAML 只能从 meta 走（见 packages/schema/src/browser.ts 与宿主 files.ts）。
   const meta = settled ? asRecord(block.meta) : undefined
   const yamlSpec = argsYaml !== ''
     ? argsYaml
@@ -150,19 +144,6 @@ function readSlice(block: {
     ? block.phase === 'preparing' ? 'preparing' : 'running'
     : isError ? 'error' : 'ok'
   return { argsRaw, yamlSpec, title, result, savedPath, isError, state }
-}
-
-/**
- * 形状守卫：`normalizeSpec` 假定结构已经通过校验，而浏览器半没有 Ajv 兜底，
- * 所以这里先把它变成一个「至少不会抛在 normalize 内部」的输入。
- */
-function asArchSpec(value: unknown): ArchSpec {
-  if (typeof value !== 'object' || value === null) throw new Error('YAML 顶层不是对象')
-  const candidate = value as { nodes?: unknown; edges?: unknown }
-  if (!Array.isArray(candidate.nodes) || !Array.isArray(candidate.edges)) {
-    throw new Error('缺少 nodes / edges 数组')
-  }
-  return value as ArchSpec
 }
 
 const styles = {
@@ -245,56 +226,12 @@ function DiagramCard(props: {
   const { callId, block, t } = props
   const slice = readSlice(block)
   const [open, setOpen] = useState(false)
-  const [model, setModel] = useState<DiagramModel | null>(null)
-  const [modelError, setModelError] = useState<string | null>(null)
-
-  const yamlSpec = slice.yamlSpec
-  const title = slice.title
-
-  // 从 YAML 现场重算：start 阶段参数就已完整，所以「运行中」也能先出图。
-  useEffect(() => {
-    if (yamlSpec === '') {
-      setModel(null)
-      setModelError(null)
-      return
-    }
-    let cancelled = false
-    setModelError(null)
-    void (async () => {
-      try {
-        const parsed = parseYaml(yamlSpec)
-        if (!parsed.ok) throw new Error(parsed.diagnostics[0]?.message ?? 'YAML 解析失败')
-        const spec = normalizeSpec(asArchSpec(parsed.value))
-        const layout = await layoutSpec(spec)
-        const scene = buildScene(layout, spec)
-        // 文件级工具没有 title 参数，回落到 YAML 自己的 meta.title
-        if (!cancelled) setModel({ scene, spec, layout, title: title !== '' ? title : spec.meta.title ?? '' })
-      } catch (error: unknown) {
-        if (cancelled) return
-        setModel(null)
-        setModelError(error instanceof Error ? error.message : String(error))
-      }
-    })()
-    return () => { cancelled = true }
-  }, [yamlSpec, title])
+  const { model, error: modelError } = useDiagramModel(slice.yamlSpec, slice.title)
 
   const onDownload = useCallback(() => {
     if (model === null) return
     try {
-      const artifact = buildDrawio({
-        title: model.title === '' ? 'diagram' : model.title,
-        spec: model.spec,
-        layout: model.layout,
-      })
-      const blob = new Blob([artifact.xml], { type: 'application/xml;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = artifact.fileName
-      anchor.rel = 'noopener'
-      anchor.click()
-      // 立刻 revoke 在部分浏览器会打断下载，给一拍再回收。
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      downloadDrawio(model)
     } catch (error: unknown) {
       console.error('[dsh-diagram] 导出 .drawio 失败:', error)
     }
@@ -314,12 +251,12 @@ function DiagramCard(props: {
   const counts = model === null
     ? ''
     : `${model.layout.nodes.length} ${t('unit')} · ${model.layout.edges.length} ${t('link')}`
-  const summary = [counts, title !== '' ? title : model?.title ?? ''].filter((part) => part !== '').join(' · ')
+  const summary = [counts, slice.title !== '' ? slice.title : model?.title ?? ''].filter((part) => part !== '').join(' · ')
   const details = slice.result ?? slice.argsRaw ?? ''
   // 只要客户端能重算出布局就出图：`save_drawio` 被沙箱拒绝这类失败里图本身是好的，
   // 应该「出图 + 把错误摆在下面」，而不是整行只剩错误文本。
   const canRender = model !== null
-  const metaMissing = slice.state !== 'preparing' && slice.state !== 'error' && yamlSpec === ''
+  const metaMissing = slice.state !== 'preparing' && slice.state !== 'error' && slice.yamlSpec === ''
 
   return (
     <div style={styles.row} data-dsh-diagram-card={props.toolName ?? 'render_architecture'}>
@@ -370,19 +307,93 @@ function DiagramCard(props: {
   )
 }
 
-/** 客户端插件体：注册文案字典与两个 keyed toolview。 */
+/** 槽位注册选项：keyed 槽用 `key`，list 槽用 `id`；`order` / `locale` 两者通用。 */
+interface SlotRegisterOptions {
+  name: string
+  key?: string
+  id?: string
+  order?: number
+  locale?: string
+}
+
+/** 客户端上下文里我们用到的部分（最小结构，见文件头注释）。 */
+interface ClientContextLike {
+  get(name: string): unknown
+  effect(fn: () => () => void, label: string): void
+  /** 运行时依赖注入：依赖齐了才跑回调，服务消失时回调注册的东西一起释放。 */
+  inject(services: string[], callback: (scoped: ClientContextLike) => void): void
+  locale: {
+    register(ns: string, dict: unknown): () => void
+    bind(ns: string): (key: string) => string
+  }
+  slots: {
+    inject(slot: string, register: (() => unknown) | Iterable<() => unknown>): void
+    register(options: SlotRegisterOptions, component: unknown): unknown
+  }
+}
+
+/** `uiConversation` 服务里我们用到的那一块。 */
+interface UiConversationLike {
+  events?: { register(definition: unknown): void }
+}
+
+/** 回合末尾预览的文案绑定。 */
+function previewLabels(t: (key: keyof Dict) => string) {
+  return {
+    title: t('turnTitle'),
+    download: t('download'),
+    fitWidth: t('fitWidth'),
+    fitAll: t('fitAll'),
+    zoomIn: t('zoomIn'),
+    zoomOut: t('zoomOut'),
+    failed: t('failed'),
+  }
+}
+
+/**
+ * 注册「回合末尾再现」这条旁路。
+ *
+ * 槽位契约（`cordis_inspect_query` Client `Slots` 实测，DSH 0.1.7-rc.2）：
+ * `conversation.chat.turnTail` 是 list 槽，注册项是 `{ name, id, order?, label? }` ——
+ * 新 `id` 追加一个条目、无内容返回 `null` 即不占位。owner props 是
+ * `{ turn: TurnLocation; seq: number; openFile }`。
+ *
+ * 用 `ctx.inject(['uiConversation'], …)` 而**不是**在 apply 里直接 `ctx.get`：
+ * 后者取决于客户端模块的激活顺序（实测会跑在 ui-conversation 之前，拿不到服务）；
+ * 而 `dsh.client.inject` 那份顺序清单是**宿主启动时**读取的，改它又要重启。
+ * 运行时注入与顺序无关，服务出现才注册、消失就释放 —— 也是 practices 文档推荐的可选依赖写法。
+ *
+ * 注：`dsh-univer-office` 为更老的 DSH 保留了 `select` 形态的降级分支；本机槽位目录里
+ * list 槽要的是 `id`，没有 `select`，所以这里不写那条分支（写了也是死代码）。
+ * @param ctx - 客户端上下文。
+ * @param t - 已绑定命名空间的翻译函数。
+ */
+function registerTurnPreview(ctx: ClientContextLike, t: (key: keyof Dict) => string): void {
+  const labels = previewLabels(t)
+  ctx.inject(['uiConversation'], (scoped) => {
+    const uiConversation = scoped.get('uiConversation') as UiConversationLike | undefined
+    if (uiConversation?.events === undefined) return
+    try {
+      uiConversation.events.register(diagramTurnDefinition)
+    } catch (error: unknown) {
+      // 重复注册（HMR / 同页多实例）不该打断插件加载。
+      if (!(error instanceof Error) || !error.message.includes('already registered')) throw error
+    }
+    // 条目注册跟着这次注入的作用域走：服务重建时旧条目一并释放，不会越挂越多。
+    scoped.slots.inject('conversation.chat.turnTail', () => scoped.slots.register(
+      { name: 'conversation.chat.turnTail', id: TURN_PREVIEW_ID, order: 50, locale: NS },
+      (owner: TurnOwnerProps) => <TurnPreview turn={owner.turn} labels={labels} />,
+    ))
+  })
+}
+
+/** 客户端插件体：注册文案字典、两个 keyed toolview、以及回合末尾预览。 */
 export default {
   inject: ['slots', 'locale'],
-  apply(ctx: {
-    effect: (fn: () => () => void, label: string) => void
-    locale: { register: (ns: string, dict: unknown) => () => void; bind: (ns: string) => (key: string) => string }
-    slots: {
-      inject: (slot: string, register: (() => unknown) | Iterable<() => unknown>) => void
-      register: (options: { name: string; key: string; locale?: string }, component: unknown) => unknown
-    }
-  }): void {
+  apply(ctx: ClientContextLike): void {
     ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-diagram: dictionaries')
     const t = ctx.locale.bind(NS) as (key: keyof Dict) => string
+
     // 工厂保持无副作用；注册随 owner（tool.call.toolview 声明）折叠与恢复。
     // generator 形态与 ui-tool 自己的 toolview 一致：一次注入注册多个 key。
     ctx.slots.inject('tool.call.toolview', function* () {
@@ -394,5 +405,7 @@ export default {
         )
       }
     })
+
+    registerTurnPreview(ctx, t)
   },
 }
