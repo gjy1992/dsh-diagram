@@ -16,6 +16,7 @@
     "baseUrl": ".",
     "paths": {
       "@dsh-diagram/schema": ["packages/schema/src/index.ts"],
+      "@dsh-diagram/schema/browser": ["packages/schema/src/browser.ts"],
       "@dsh-diagram/layout": ["packages/layout/src/index.ts"],
       "@dsh-diagram/drawio": ["packages/drawio/src/index.ts"],
       "@dsh-diagram/core": ["packages/core/src/index.ts"]

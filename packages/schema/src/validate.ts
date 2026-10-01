@@ -2,18 +2,8 @@ import Ajv, { type ErrorObject } from 'ajv';
 import { suggestId, type Diagnostic } from './diagnostics';
 import { archSpecSchema } from './json-schema';
 import { parseYaml } from './parse';
-import {
-  MAX_GROUP_LEVELS,
-  type ArchSpec,
-  type EdgeStyle,
-  type GroupVariant,
-  type MetaSpec,
-  type NodeVariant,
-  type NormalizedEdge,
-  type NormalizedGroup,
-  type NormalizedNode,
-  type NormalizedSpec,
-} from './types';
+import { normalizeSpec } from './normalize';
+import { MAX_GROUP_LEVELS, type ArchSpec, type NormalizedSpec } from './types';
 
 export type ValidationResult =
   | { ok: true; spec: NormalizedSpec }
@@ -99,7 +89,7 @@ export function validateArchSpec(source: string | unknown): ValidationResult {
 
   const ast = raw as ArchSpec;
   const diagnostics: Diagnostic[] = [];
-  const spec = normalize(ast);
+  const spec = normalizeSpec(ast);
   const groupIds = spec.groups.map((group) => group.id);
   const nodeIds = spec.nodes.map((node) => node.id);
   const groupIdSet = new Set(groupIds);
@@ -215,44 +205,4 @@ function reportDuplicates(ids: string[], collection: string, diagnostics: Diagno
     }
     seen.add(id);
   }
-}
-
-/** 结构校验通过后填缺省值，产出规范形态 */
-function normalize(ast: ArchSpec): NormalizedSpec {
-  const groups: NormalizedGroup[] = (ast.groups ?? []).map((group) => ({
-    id: group.id,
-    title: group.title,
-    variant: (group.variant ?? 'dashed') as GroupVariant,
-    parent: group.parent,
-  }));
-
-  const nodes: NormalizedNode[] = ast.nodes.map((node) => ({
-    id: node.id,
-    title: node.title,
-    group: node.group,
-    desc: node.desc,
-    variant: (node.variant ?? 'default') as NodeVariant,
-    items: node.items ?? [],
-  }));
-
-  const edges: NormalizedEdge[] = ast.edges.map((edge) => ({
-    from: edge.from,
-    to: edge.to,
-    label: edge.label,
-    style: (edge.style ?? 'solid') as EdgeStyle,
-  }));
-
-  const meta: MetaSpec = ast.meta ?? {};
-  const maxColumns = ast.layout?.max_columns ?? 'auto';
-  const direction = ast.layout?.direction ?? 'TB';
-  const innerDirection = ast.layout?.inner_direction ?? 'auto';
-
-  return {
-    version: ast.version ?? '1.0',
-    meta,
-    layout: { maxColumns, direction, innerDirection },
-    groups,
-    nodes,
-    edges,
-  };
 }

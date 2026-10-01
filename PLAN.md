@@ -521,12 +521,12 @@ plugin/
 | 客户端 slot 注册 | ✅ occupant `{ key: "render_architecture", active: true }` | `cordis_inspect_query` Client `Slots.listSubTree` |
 | 真实调用（成功路径） | ✅ “已生成架构图：4 个分组 / 9 个节点 / 8 条连线，画布 1252×902…” | 狗粮图：画插件自身架构 |
 | 真实调用（自愈路径） | ✅ `Error: ValidationError: yaml_spec 中有 1 处问题，请修正后重新调用本工具。` | 反例 `variant: core` |
-| `save_drawio` 落盘 | ⚠️ **被沙箱拒绝**（见 C1），修复已写入源码与产物，**待一次 dsh 重启后复验** | —— |
+| `save_drawio` 落盘 | ✅ 重启后复验通过 | 真实调用返回 `已落盘到 F:\gitProject\dsh-plugins\dsh-diagram\S2 落盘复验.drawio`，磁盘上确有该文件 |
 
 ### 实测踩坑（都不是猜测）
 
 * **C1 · `fs.writeText` 省略 `sandboxPolicy` ≠ 沿用当前会话策略**。`fs-sandbox/src/index.ts:123` 是 `const policy = sandboxPolicy ?? this.ctx.sandboxPolicy.resolve()` —— 不带 session 的 `resolve()` 用的是**部署默认**（`workspace-write` + 部署兜底根），于是会话工作区里的目标被判成"外面"，报 `cannot write "…": file access denied under workspace-write mode`。修法：每次执行都 `ctx.sandboxPolicy.resolve({ session })` 再显式传下去（与 `tool-fs` 一致）。
-* **C2 · 本 profile 的宿主侧热更新是关的**。`hmr` 行默认 `root: []`（只保留显式配置监听），且 `plugin_manager` 的 `set_plugin` 关→开循环**不会**让已缓存的 ESM 模块失效 —— 实测：改完诊断文案、重打包、重启插件后，工具调用仍返回旧文案。**结论：宿主半的任何改动都需要重启 dsh 才生效**（客户端半是否随页面刷新更新，S2 首轮实测）。
+* **C2 · 本 profile 的宿主侧热更新是关的**。`hmr` 行默认 `root: []`（只保留显式配置监听），且 `plugin_manager` 的 `set_plugin` 关→开循环**不会**让已缓存的 ESM 模块失效 —— 实测：改完诊断文案、重打包、重启插件后，工具调用仍返回旧文案。**结论：宿主半的任何改动都需要重启 dsh 才生效**；但**客户端半不需要** —— 客户端产物的 URL 带内容 sha1 的 `rev` 戳，重打包后刷新页面就能取到新字节（S2 实测：刷新前后「带 SVG 的卡片数」3 → 6）。
 
 ## P2.5 遗留与 TODO
 
@@ -535,9 +535,41 @@ plugin/
 | **T1** | 第二个工具 `drawio_to_yaml` | 契约已冻结（`{path}` → `{yaml_spec, warnings}`），**本轮不注册、不实现**。难点：mxGraph cell → DSL 只能恢复语义，用户手改的几何/新增图形/自定义样式无法还原，需先定「丢弃 vs 降级成 items 注释」策略 |
 | **T2** | schema 错误会短路拓扑检查 | `validateArchSpec` 在 Ajv 阶段失败即返回，不再跑外键/环检查，模型需多轮才能收敛（PRD §4.3 期望一次拿到全部问题）。方向：防御式归一化后合并报告 |
 | **T3** | 客户端半无类型检查 | 仓库未装 `@types/react`，`plugin/src/**` 只经 esbuild（语法）+ 运行验证。要补则加 plugin 局部 tsconfig |
-| **T4** | `save_drawio` 端到端复验 | 依赖一次 dsh 重启（C2） |
-| **T5** | S2 主体 | SVG 深色预览（pan/zoom + hover 高亮入出边）+「下载 .drawio」按钮 + 按 ui-primitives 复刻行头 |
+| **T4** | ~~`save_drawio` 端到端复验~~ | ✅ 已完成 |
+| **T5** | 卡片像素级视觉回归 | 本机无法用 BrowserRig 截到卡片；原因与绕法见 P2.6「验证手段的限制」 |
 
-## P2.6 S2 预告（待用户确认后开工）
+## P2.6 S2 执行结果（2026-10-01）：SVG 深色预览卡片
 
-客户端半 S2 需要解决：① 浏览器侧不能引入 Ajv（`new Function` 与 CSP/包体都不可取），故 `@dsh-diagram/schema` 需要一个**不含 validate.ts 的浏览器入口**（`parseYaml` + `normalize` + 类型）；② 行头按 `ui-primitives` 的 markup/CSS 自绘，只用 `--dsw-alias-*` token；③ 下载用 Blob（前端同一份引擎生成明文 XML）。
+### 落地结构
+
+| 文件 | 职责 |
+| :--- | :--- |
+| `packages/schema/src/browser.ts` | 浏览器入口：**只有** types + `parseYaml` + `normalizeSpec`，刻意不含 Ajv |
+| `packages/schema/src/normalize.ts` | 从 `validate.ts` 抽出的填缺省函数，宿主与浏览器共用（两侧口径不漂移） |
+| `plugin/src/diagram/scene.ts` | 纯场景构建：`LayoutResult` → 矩形 / 折线 / 文本图元 + 调色 |
+| `plugin/src/diagram/DiagramCanvas.tsx` | React 画布：pan/zoom、hover 高亮入出边、适应宽度/整图/±/下载 工具条 |
+| `plugin/src/client.tsx` | 卡片行头 + 生命周期：从 `yaml_spec` 现场 `parse → normalize → layout → scene` |
+
+### 三条关键实现口径
+
+1. **浏览器半绝不能有 Ajv**：`layout/layering.ts` 有一处 `MAX_GROUP_LEVELS` 的**值**导入走的是包根 specifier，而包根 `export * from './validate'`（Ajv + 编译 schema 的 `new Function`）。构建脚本因此把包根 specifier **别名**到 `browser.ts`（这是必须，不是优化）——实测客户端产物 Ajv 痕迹 **0**，引擎痕迹在。
+2. **SVG 坐标 1 单位 = 1px**：`<svg>` 的 viewBox 就是容器像素，屏幕 ↔ 内容换算只有一层 `(p - view) / k`；初始按适应宽度且不放大超过 1:1，过高时容器截断并允许纵向拖动。
+3. **预览与导出同源**：卡片与「下载 .drawio」用同一份 `LayoutResult`，所以所见与文件所出逐点一致。
+
+### 验收（真实运行时，不是单测）
+
+| 验收项 | 结果 | 证据 |
+| :--- | :--- | :--- |
+| SVG 渲染 | ✅ 6/8 张卡片带 SVG（3 次成功 + 3 次因落盘被拒但图本身有效）；样例为 9 节点 / 4 分组框 / 8 箭头 / 5 标签 | DOM 枚举 |
+| 文字不溢出卡片 | ✅ 9 个节点全部 `overflowY ≤ -12px`、`overflowX ≤ -19px`，`worstOverflow = 0` | `getBBox()` 几何自检 |
+| 适应宽度 | ✅ `translate(15.29 15.29) scale(0.9556)`，正好是 `margin×k` 与 `hostWidth/contentW` | transform 读取 |
+| 滚轮缩放 | ✅ `scale 1.3697 → 1.9632`，`translate` 同步（以光标为锚点） | 派发 wheel 前后比对 |
+| 悬停高亮入出边 | ✅ 悬停 1 个节点 → 3 条相连边转 `#38bdf8`、其余 5 条 `opacity 0.22`、节点描边转 `#38bdf8` | stroke / opacity 统计 |
+| 下载 .drawio | ✅ Blob 11,264 B / `application/xml;charset=utf-8` / 文件名 `dsh-diagram Phase 2 插件架构.drawio` / 内容 `<mxfile host="dsh-diagram">…<mxGraphModel>` | 拦截 `URL.createObjectURL` 与 `HTMLAnchorElement.click` |
+| 客户端热更新 | ✅ 重打包后**刷新页面**即生效，无需重启 dsh | 刷新前后「带 SVG 的卡片数」3 → 6 |
+| 失败卡片仍出图 | ✅ `save_drawio` 被拒的卡片现在「图 + 错误文本」同时可见 | 卡片数 6/8 的由来 |
+
+### 验证手段的限制（如实记录）
+
+* **拿不到卡片的像素截图**。这个 GUI 的分页式对话把非活动页留在 DOM 中，但绘制在活动页之下：卡片 `getBoundingClientRect()` 有值，而同一坐标的 `elementFromPoint()` 返回旁白 `<p>`，`locator.screenshot()` 因此一直卡在 actionability 超时、`page.screenshot({clip})` 只能截到旁白。**所以交互与几何都用 DOM 断言验证（上表），「好不好看」只能靠人眼**（用户在自己 GUI 里看得到卡片）。
+* **下载事件拦不到**：BrowserRig 是扩展承载页，Chromium 禁掉了 `Browser.setDownloadBehavior`。改为拦截 `URL.createObjectURL` + `anchor.click`，证明「浏览器里生成了正确的字节与文件名」；真正的保存动作由浏览器自己完成。

@@ -2230,8 +2230,8 @@ var require_resolve = __commonJS({
       }
       return count;
     }
-    function getFullPath(resolver, id = "", normalize2) {
-      if (normalize2 !== false)
+    function getFullPath(resolver, id = "", normalize) {
+      if (normalize !== false)
         id = normalizeId(id);
       const p = resolver.parse(id);
       return _getFullPath(resolver, p);
@@ -3826,7 +3826,7 @@ var require_fast_uri = __commonJS({
       }
       return decodedScheme;
     }
-    function normalize2(uri, options) {
+    function normalize(uri, options) {
       if (typeof uri === "string") {
         uri = /** @type {T} */
         normalizeString(uri, options);
@@ -4204,7 +4204,7 @@ var require_fast_uri = __commonJS({
     }
     var fastUri = {
       SCHEMES,
-      normalize: normalize2,
+      normalize,
       resolve,
       resolveComponent,
       equal,
@@ -10235,6 +10235,42 @@ var archSpecSchema = {
   }
 };
 
+// packages/schema/src/normalize.ts
+function normalizeSpec(ast) {
+  const groups = (ast.groups ?? []).map((group) => ({
+    id: group.id,
+    title: group.title,
+    variant: group.variant ?? "dashed",
+    parent: group.parent
+  }));
+  const nodes = ast.nodes.map((node) => ({
+    id: node.id,
+    title: node.title,
+    group: node.group,
+    desc: node.desc,
+    variant: node.variant ?? "default",
+    items: node.items ?? []
+  }));
+  const edges = ast.edges.map((edge) => ({
+    from: edge.from,
+    to: edge.to,
+    label: edge.label,
+    style: edge.style ?? "solid"
+  }));
+  const meta = ast.meta ?? {};
+  const maxColumns = ast.layout?.max_columns ?? "auto";
+  const direction = ast.layout?.direction ?? "TB";
+  const innerDirection = ast.layout?.inner_direction ?? "auto";
+  return {
+    version: ast.version ?? "1.0",
+    meta,
+    layout: { maxColumns, direction, innerDirection },
+    groups,
+    nodes,
+    edges
+  };
+}
+
 // packages/schema/src/validate.ts
 var ajv = new import_ajv.default({ allErrors: true, strict: false });
 var ensureSchemaValid = ajv.compile(archSpecSchema);
@@ -10292,7 +10328,7 @@ function validateArchSpec(source) {
   }
   const ast = raw;
   const diagnostics = [];
-  const spec = normalize(ast);
+  const spec = normalizeSpec(ast);
   const groupIds = spec.groups.map((group) => group.id);
   const nodeIds = spec.nodes.map((node) => node.id);
   const groupIdSet = new Set(groupIds);
@@ -10397,40 +10433,6 @@ function reportDuplicates(ids, collection, diagnostics) {
     }
     seen.add(id);
   }
-}
-function normalize(ast) {
-  const groups = (ast.groups ?? []).map((group) => ({
-    id: group.id,
-    title: group.title,
-    variant: group.variant ?? "dashed",
-    parent: group.parent
-  }));
-  const nodes = ast.nodes.map((node) => ({
-    id: node.id,
-    title: node.title,
-    group: node.group,
-    desc: node.desc,
-    variant: node.variant ?? "default",
-    items: node.items ?? []
-  }));
-  const edges = ast.edges.map((edge) => ({
-    from: edge.from,
-    to: edge.to,
-    label: edge.label,
-    style: edge.style ?? "solid"
-  }));
-  const meta = ast.meta ?? {};
-  const maxColumns = ast.layout?.max_columns ?? "auto";
-  const direction = ast.layout?.direction ?? "TB";
-  const innerDirection = ast.layout?.inner_direction ?? "auto";
-  return {
-    version: ast.version ?? "1.0",
-    meta,
-    layout: { maxColumns, direction, innerDirection },
-    groups,
-    nodes,
-    edges
-  };
 }
 
 // packages/layout/src/layering.ts

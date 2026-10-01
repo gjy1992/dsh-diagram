@@ -94,6 +94,12 @@ await esbuild.build({
 })
 
 // ② 客户端半：CJS 主体（write:false，稍后套信封）。
+//
+// 别名是**必须的**，不是优化：layout 的 layering.ts 有一处 `MAX_GROUP_LEVELS` 的
+// **值**导入走包根 specifier，而包根会 `export * from './validate'`（Ajv + 编译
+// schema 时的 new Function）。把根 specifier 改指浏览器入口后，客户端只拿到
+// types / parse / normalize 三个模块，Ajv 与 js-yaml 之外的校验器都不会进包。
+const SCHEMA_BROWSER = join(ROOT, 'packages', 'schema', 'src', 'browser.ts')
 const client = await esbuild.build({
   ...shared,
   entryPoints: [join(PLUGIN_DIR, 'src/client.tsx')],
@@ -102,6 +108,10 @@ const client = await esbuild.build({
   target: 'es2020',
   jsx: 'automatic',
   external: ['react', 'react/jsx-runtime'],
+  alias: {
+    '@dsh-diagram/schema': SCHEMA_BROWSER,
+    '@dsh-diagram/schema/browser': SCHEMA_BROWSER,
+  },
   write: false,
   metafile: true,
 })
