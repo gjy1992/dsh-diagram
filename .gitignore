@@ -7,6 +7,9 @@ dist/
 build/
 *.tsbuildinfo
 
+# package artifacts (pnpm pack / npm pack) —— 发布产物不进仓库
+*.tgz
+
 # local verification output (CLI generated artifacts)
 out/
 tmp/
