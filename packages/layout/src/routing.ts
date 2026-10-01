@@ -1,7 +1,9 @@
-import type { LayoutDirection, NormalizedSpec } from '@dsh-diagram/schema';
-import type { NodeMeta, Placement } from './placement';
+﻿import type { LayoutDirection, NormalizedSpec } from '@dsh-diagram/schema';
+import { ROOT_UNIT_KEY } from './layering';
+import type { NodeMeta, OpenSides, Placement } from './placement';
 import {
   COLLISION_PADDING,
+  LANE_CLEARANCE,
   LANE_LIMIT,
   LANE_STEP,
   MAX_LANE_GAP,
@@ -31,6 +33,12 @@ interface RouteContext {
   placed: Segment[];
   /** 当前边走线框架是否与物理口径互为转置；是则比较已放置线段时需翻转轴标签 */
   flipPlaced: boolean;
+  /** 额外障碍：与本边无关的分组框（长边绕行时不许穿进去） */
+  obstacles: Rect[];
+  /** 源条目所属分组框在本框架下的底边（无分组时为 -Infinity） */
+  exitBoxBottom: number;
+  /** 把某个 y 推开分组框横边框至少 LANE_CLEARANCE，避免连线压在虚线框上 */
+  clearY: (y: number) => number;
 }
 
 /** 层间走廊的车道分配结果 */
@@ -109,34 +117,40 @@ function toSegments(points: LayoutPoint[]): Segment[] {
   return segments;
 }
 
-/** 线段是否穿过任一节点矩形（源/目标自身除外） */
+/** 线段是否与矩形相交（pad 为额外安全边距） */
+function segmentHitsRect(segment: Segment, rect: Rect, pad: number): boolean {
+  const x1 = rect.x - pad;
+  const y1 = rect.y - pad;
+  const x2 = rect.x + rect.width + pad;
+  const y2 = rect.y + rect.height + pad;
+
+  if (segment.axis === 'h') {
+    if (segment.coord < y1 || segment.coord > y2) {
+      return false;
+    }
+    return segment.hi >= x1 && segment.lo <= x2;
+  }
+  if (segment.coord < x1 || segment.coord > x2) {
+    return false;
+  }
+  return segment.hi >= y1 && segment.lo <= y2;
+}
+
+/** 线段是否穿过任一节点矩形（源/目标自身除外）或任一无关分组框 */
 function collides(segments: Segment[], context: RouteContext): boolean {
   for (const segment of segments) {
     for (const [id, rect] of context.rects) {
       if (context.skipped.has(id)) {
         continue;
       }
-      const x1 = rect.x - COLLISION_PADDING;
-      const y1 = rect.y - COLLISION_PADDING;
-      const x2 = rect.x + rect.width + COLLISION_PADDING;
-      const y2 = rect.y + rect.height + COLLISION_PADDING;
-
-      if (segment.axis === 'h') {
-        if (segment.coord < y1 || segment.coord > y2) {
-          continue;
-        }
-        if (segment.hi < x1 || segment.lo > x2) {
-          continue;
-        }
+      if (segmentHitsRect(segment, rect, COLLISION_PADDING)) {
         return true;
       }
-      if (segment.coord < x1 || segment.coord > x2) {
-        continue;
+    }
+    for (const obstacle of context.obstacles) {
+      if (segmentHitsRect(segment, obstacle, 0)) {
+        return true;
       }
-      if (segment.hi < y1 || segment.lo > y2) {
-        continue;
-      }
-      return true;
     }
   }
   return false;
@@ -154,6 +168,28 @@ function overlapsPlaced(segments: Segment[], context: RouteContext): boolean {
         continue;
       }
       if (segment.hi < other.lo - EPS || segment.lo > other.hi + EPS) {
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 与其他连线是否**垂直交叉**（十字相交；共线重叠由 `overlapsPlaced` 负责） */
+function crossesPlaced(segments: Segment[], context: RouteContext): boolean {
+  for (const segment of segments) {
+    for (const raw of context.placed) {
+      const other = context.flipPlaced ? flipSegment(raw) : raw;
+      if (other.axis === segment.axis) {
+        continue;
+      }
+      const horizontal = segment.axis === 'h' ? segment : other;
+      const vertical = segment.axis === 'h' ? other : segment;
+      if (horizontal.coord <= vertical.lo + EPS || horizontal.coord >= vertical.hi - EPS) {
+        continue;
+      }
+      if (vertical.coord <= horizontal.lo + EPS || vertical.coord >= horizontal.hi - EPS) {
         continue;
       }
       return true;
@@ -204,18 +240,44 @@ function computeColumnGaps(rects: Rect[]): number[] {
 
 type Candidate = (offset: number) => LayoutPoint[] | null;
 
-/** 取离目标最近的若干条安全垂直走廊，末尾补上左右外侧栏杆作为兜底通道 */
+/**
+ * 外侧栏杆只允许**向外**漂移。
+ * 车道偏移是双向的（0, +8, -8, +16, …），若原样作用在栏杆上会把栏杆拉回内容区、
+ * 与分组框虚线边框重合（实测：03 的 `持久化` / `上报进度` 曾落到距组框仅 16px 处）。
+ */
+function railXAt(corridorX: number, offset: number, context: RouteContext): number {
+  if (corridorX === context.outerLeftX) {
+    return Math.min(corridorX + offset, corridorX);
+  }
+  if (corridorX === context.outerRightX) {
+    return Math.max(corridorX + offset, corridorX);
+  }
+  return corridorX + offset;
+}
+
+/**
+ * 取离目标最近的若干条安全垂直走廊，并补上左右外侧栏杆作为兜底通道。
+ * `outerFirst` = true 时把**较近一侧**的外侧栏杆排到最前（长边「尽量往外围绕」用的优先级）。
+ */
 function pickCorridors(
   corridors: number[],
   target: number,
   outerLeftX: number,
   outerRightX: number,
   limit: number,
+  outerFirst: boolean,
 ): number[] {
   const nearest = [...corridors]
     .sort((left, right) => Math.abs(left - target) - Math.abs(right - target))
     .slice(0, limit);
-  return [...nearest, outerLeftX, outerRightX];
+  if (!outerFirst) {
+    return [...nearest, outerLeftX, outerRightX];
+  }
+  const outer =
+    Math.abs(outerLeftX - target) <= Math.abs(outerRightX - target)
+      ? [outerLeftX, outerRightX]
+      : [outerRightX, outerLeftX];
+  return [...outer, ...nearest];
 }
 
 /**
@@ -237,14 +299,20 @@ function buildCandidates(
   isInline: boolean,
   exitFraction: number,
   entryFraction: number,
+  openA: OpenSides,
+  openB: OpenSides,
+  outerFirst: boolean,
   srcCorridors: number[],
   dstCorridors: number[],
   context: RouteContext,
 ): Candidate[] {
   const aRight = a.x + a.width;
   const aBottom = a.y + a.height;
+  const bRight = b.x + b.width;
+  const bBottom = b.y + b.height;
   const bBelow = b.y >= aBottom - EPS;
-  const rowOverlap = Math.min(aBottom, b.y + b.height) - Math.max(a.y, b.y) > EPS;
+  const bAbove = bBottom <= a.y + EPS;
+  const rowOverlap = Math.min(aBottom, bBottom) - Math.max(a.y, b.y) > EPS;
 
   // 出/入端口按同源、同目标边的序号分散，避免多条边挤在同一点（也避免被重叠检测误杀）
   const fromBottom = anchorOf(a, 'bottom', exitFraction);
@@ -295,15 +363,92 @@ function buildCandidates(
     },
   ];
 
+  // ⑥ 逆向直连：目标在源上方，且源的「主轴起点侧」与目标的「主轴终点侧」都朝外开放
+  //    （即源在最外层行、目标也在最外层行）→ 允许「上边出、下边入」，通常是一条直线；
+  //    这是「首行/末行允许走上边和下边出入」的落地（03 的 `上报进度` 由 4 折变 0 折）。
+  candidates.push((offset) => {
+    if (!bAbove || !openA.mainStart || !openB.mainEnd) {
+      return null;
+    }
+    const from = anchorOf(a, 'top', exitFraction);
+    const to = anchorOf(b, 'bottom', entryFraction);
+    const midY = Math.min(context.clearY((bBottom + a.y) / 2 + offset), a.y - 6);
+    return [from, { x: from.x, y: midY }, { x: to.x, y: midY }, to];
+  });
+
+  // ⑦ 外圈侧向直连：源与目标在**同一侧**都有开放端口（都在首列或都在末列）时，
+  //    走「同侧出 → 外侧通道 → 同侧入」，只要 2 折（05 的跨域/回流由 4 折变 2 折）。
+  //    自加一道「不与已放置连线十字相交」的约束：相邻长边的短横段很容易穿过彼此的竖段
+  //    （05 实测过 5 处），不满足就整体让位给 ④ / ⑤。
+  for (const side of ['crossStart', 'crossEnd'] as const) {
+    candidates.push((offset) => {
+      if (!openA[side] || !openB[side]) {
+        return null;
+      }
+      const left = side === 'crossStart';
+      const from = anchorOf(a, left ? 'left' : 'right', exitFraction);
+      const to = anchorOf(b, left ? 'left' : 'right', entryFraction);
+      // 通道必须落在这两个端口的外侧：长边直接用外圈栏杆，短边就近取外侧
+      const x = outerFirst
+        ? railXAt(left ? context.outerLeftX : context.outerRightX, offset, context)
+        : left
+          ? Math.min(a.x, b.x) - LANE_STEP - Math.abs(offset)
+          : Math.max(aRight, bRight) + LANE_STEP + Math.abs(offset);
+      const route = simplify([from, { x, y: from.y }, { x, y: to.y }, to]);
+      const segments = toSegments(route);
+      if (segments.length === 0 || crossesPlaced(segments, context)) {
+        return null;
+      }
+      return route;
+    });
+  }
+
+  // ⑧ 开放侧出：长边若源的外侧有留白，直接从那一侧出边去走廊，
+  //    省掉「先下潜再横移」那一折，也不再贴着分组框底边走（03 的 `持久化`）。
+  for (const side of ['crossStart', 'crossEnd'] as const) {
+    if (!openA[side]) {
+      continue;
+    }
+    const portSide: Side = side === 'crossStart' ? 'left' : 'right';
+    for (const corridorX of srcCorridors) {
+      candidates.push((offset) => {
+        if (!bBelow) {
+          return null;
+        }
+        const from = anchorOf(a, portSide, exitFraction);
+        const x = railXAt(corridorX, offset, context);
+        // 走廊必须落在出边那一侧之外，否则会折返
+        if (side === 'crossStart' ? x > from.x - EPS : x < from.x + EPS) {
+          return null;
+        }
+        const approachY = Math.min(context.clearY(toTop.y - DETOUR_APPROACH - Math.abs(offset)), toTop.y - 6);
+        if (approachY <= from.y) {
+          return null;
+        }
+        const route = simplify([
+          from,
+          { x, y: from.y },
+          { x, y: approachY },
+          { x: toTop.x, y: approachY },
+          toTop,
+        ]);
+        if (crossesPlaced(toSegments(route), context)) {
+          return null; // 与已放置连线十字相交就让位给普通绕行
+        }
+        return route;
+      });
+    }
+  }
+
   // ④ 跨多层正向：下潜 → 逐条安全垂直走廊下行 → 目标层上方折入
   for (const corridorX of srcCorridors) {
     candidates.push((offset) => {
       if (!bBelow) {
         return null;
       }
-      const downY = aBottom + DETOUR_PAD;
-      const x = corridorX + offset;
-      const approachY = toTop.y - DETOUR_APPROACH - offset;
+      const downY = Math.max(aBottom + DETOUR_PAD, context.exitBoxBottom + LANE_CLEARANCE);
+      const x = railXAt(corridorX, offset, context);
+      const approachY = Math.min(context.clearY(toTop.y - DETOUR_APPROACH - offset), toTop.y - 6);
       if (approachY <= downY) {
         return null;
       }
@@ -325,16 +470,18 @@ function buildCandidates(
         if (bBelow) {
           return null;
         }
-        const downY = aBottom + DETOUR_PAD;
-        const railY = context.topRailY - offset;
-        const approachY = toTop.y - DETOUR_APPROACH - offset;
+        const downY = Math.max(aBottom + DETOUR_PAD, context.exitBoxBottom + LANE_CLEARANCE);
+        const railY = context.topRailY - Math.abs(offset);
+        const sx = railXAt(srcX, offset, context);
+        const dx = railXAt(dstX, offset, context);
+        const approachY = Math.min(context.clearY(toTop.y - DETOUR_APPROACH - Math.abs(offset)), toTop.y - 6);
         return [
           fromBottom,
           { x: fromBottom.x, y: downY },
-          { x: srcX + offset, y: downY },
-          { x: srcX + offset, y: railY },
-          { x: dstX + offset, y: railY },
-          { x: dstX + offset, y: approachY },
+          { x: sx, y: downY },
+          { x: sx, y: railY },
+          { x: dx, y: railY },
+          { x: dx, y: approachY },
           { x: toTop.x, y: approachY },
           toTop,
         ];
@@ -343,6 +490,22 @@ function buildCandidates(
   }
 
   return candidates;
+}
+
+/**
+ * 把单元轴口径的「开放侧」映射到当前走线框架。
+ * 单元的 `main` 轴在框架里可能就是 `cross` 轴（方向互为转置时），此时四个标记要整体对调。
+ */
+function openSidesInFrame(meta: NodeMeta, frame: LayoutDirection): OpenSides {
+  if (meta.unitDirection === frame) {
+    return meta.open;
+  }
+  return {
+    mainStart: meta.open.crossStart,
+    mainEnd: meta.open.crossEnd,
+    crossStart: meta.open.mainStart,
+    crossEnd: meta.open.mainEnd,
+  };
 }
 
 /**
@@ -386,6 +549,73 @@ export function routeEdges(
   const bandsOf = (frame: LayoutDirection): Map<string, Rect> =>
     frame === 'TB' ? physicalBands : transposedBands;
 
+  // 分组框：长边绕行时作为「无关分组」障碍
+  const physicalGroupRects = new Map<string, Rect>(
+    placement.groups.map((group) => [
+      group.id,
+      { x: group.absX, y: group.absY, width: group.width, height: group.height },
+    ]),
+  );
+  const transposedGroupRects = new Map<string, Rect>(
+    [...physicalGroupRects].map(([id, rect]) => [id, transposeRect(rect)]),
+  );
+  const groupsOf = (frame: LayoutDirection): Map<string, Rect> =>
+    frame === 'TB' ? physicalGroupRects : transposedGroupRects;
+
+  /** 某节点所属分组框在本框架下的底边；不在任何分组里时为 -Infinity */
+  const boxBottomOf = (nodeId: string, frame: LayoutDirection): number => {
+    const unitKey = nodeMeta.get(nodeId)?.unitKey;
+    if (unitKey === undefined || unitKey === ROOT_UNIT_KEY) {
+      return Number.NEGATIVE_INFINITY;
+    }
+    const box = groupsOf(frame).get(unitKey);
+    return box === undefined ? Number.NEGATIVE_INFINITY : box.y + box.height;
+  };
+
+  /** 本框架下所有分组框的上/下横边框 y 值 */
+  const borderYsOf = (frame: LayoutDirection): number[] =>
+    [...new Set([...groupsOf(frame).values()].flatMap((rect) => [rect.y, rect.y + rect.height]))].sort(
+      (left, right) => left - right,
+    );
+
+  /**
+   * 把 y 钳到「离分组框横边框至少 LANE_CLEARANCE」的位置：取它所在的那段空隙往中间收。
+   * 不钳制时实测出现过多处连线压在虚线框上（02 8px、03 4px、04 2px）。
+   */
+  const clearYWith = (borderYs: number[], y: number): number => {
+    let lower = Number.NEGATIVE_INFINITY;
+    let upper = Number.POSITIVE_INFINITY;
+    for (const border of borderYs) {
+      if (border <= y && border > lower) {
+        lower = border;
+      }
+      if (border >= y && border < upper) {
+        upper = border;
+      }
+    }
+    const low = Number.isFinite(lower) ? lower + LANE_CLEARANCE : Number.NEGATIVE_INFINITY;
+    const high = Number.isFinite(upper) ? upper - LANE_CLEARANCE : Number.POSITIVE_INFINITY;
+    if (low > high) {
+      return Number.isFinite(lower) && Number.isFinite(upper) ? (lower + upper) / 2 : y;
+    }
+    return Math.min(Math.max(y, low), high);
+  };
+
+  /** 分组 → 自身与全部祖先：这些框允许被穿过（端点就在里面），其余分组框算障碍 */
+  const groupChain = new Map<string, Set<string>>();
+  {
+    const parentOf = new Map(placement.groups.map((group) => [group.id, group.parentId]));
+    for (const group of placement.groups) {
+      const chain = new Set<string>([group.id]);
+      let cursor = parentOf.get(group.id);
+      while (cursor !== undefined && !chain.has(cursor)) {
+        chain.add(cursor);
+        cursor = parentOf.get(cursor);
+      }
+      groupChain.set(group.id, chain);
+    }
+  }
+
   /** 某节点所在层带在指定框架下的顶/底坐标 */
   const bandAcross = (
     frame: LayoutDirection,
@@ -405,6 +635,8 @@ export function routeEdges(
 
   const edgeCount = spec.edges.length;
   const isInline = new Array<boolean>(edgeCount).fill(false);
+  /** 长边（跨多层正向 / 逆向回边）：走线时优先外绕，且不许穿进无关分组框 */
+  const longSpan = new Array<boolean>(edgeCount).fill(true);
   const laneOf = new Map<number, LanePlan>();
   const laneGroups = new Map<string, number[]>();
 
@@ -422,10 +654,11 @@ export function routeEdges(
 
     if (metaA.unitKey === metaB.unitKey && metaA.rank === metaB.rank) {
       isInline[index] = true;
+      longSpan[index] = false;
       return;
     }
     if (b.y < a.y + a.height - EPS) {
-      return; // 非正向
+      return; // 非正向：仍是长边
     }
     const bandBottom = bandAcross(frame, edge.from, 'bottom');
     const bandTop = bandAcross(frame, edge.to, 'top');
@@ -434,8 +667,9 @@ export function routeEdges(
     }
     const gap = bandTop - bandBottom;
     if (gap <= 0 || gap > MAX_LANE_GAP) {
-      return; // 跨多层：走绕行通道
+      return; // 跨多层：仍是长边
     }
+    longSpan[index] = false;
     const key = `${frame}\u0000${metaB.unitKey}\u0000${metaB.rank}`;
     const list = laneGroups.get(key) ?? [];
     list.push(index);
@@ -455,12 +689,23 @@ export function routeEdges(
     const sorted = [...indices].sort((left, right) => centerOf(left) - centerOf(right));
 
     const first = spec.edges[sorted[0]!]!;
-    const bandBottom = bandAcross(frame, first.from, 'bottom') ?? 0;
+    // 车道基准 = max(源层带底边, 源所属分组框底边)：只用层带底边会落在组框内边距里，
+    // 实测 `分段任务` 的车道曾距 `编排层` 底边仅 4px，看起来就是贴着虚线边框走。
+    const bandBottom = Math.max(
+      bandAcross(frame, first.from, 'bottom') ?? 0,
+      boxBottomOf(first.from, frame),
+    );
     const bandTop = bandAcross(frame, first.to, 'top') ?? 0;
     const gap = Math.max(0, bandTop - bandBottom);
     const step = Math.max(LANE_STEP, Math.min(gap / (sorted.length + 1), LANE_STEP * 3));
+
+    // 车道不许贴着分组框的横边框走：取车道所在的那段空隙，往中间钳制。
+    // 实测不钳制时 02 曾距边框 8px、04 曾距 2px，看着就是压在虚线框上。
+    const frameBorderYs = borderYsOf(frame);
     sorted.forEach((index, laneIndex) => {
-      laneOf.set(index, { laneY: bandBottom + step * (laneIndex + 1) });
+      laneOf.set(index, {
+        laneY: clearYWith(frameBorderYs, bandBottom + step * (laneIndex + 1)),
+      });
     });
   }
 
@@ -499,6 +744,27 @@ export function routeEdges(
     const outerLeftX = -OUTER_CHANNEL_GAP;
     const outerRightX = frameWidth + OUTER_CHANNEL_GAP;
 
+    // 长边「尽量往外围绕」：外侧栏杆优先，且不许穿进与本边无关的分组框
+    const outerFirst = longSpan[index]!;
+    const obstacles: Rect[] = [];
+    if (outerFirst) {
+      const exempt = new Set<string>();
+      for (const nodeId of [edge.from, edge.to]) {
+        const unitKey = nodeMeta.get(nodeId)?.unitKey;
+        if (unitKey === undefined || unitKey === ROOT_UNIT_KEY) {
+          continue;
+        }
+        for (const id of groupChain.get(unitKey) ?? []) {
+          exempt.add(id);
+        }
+      }
+      for (const [id, rect] of groupsOf(frame)) {
+        if (!exempt.has(id)) {
+          obstacles.push(rect);
+        }
+      }
+    }
+
     const corridors = corridorsOf.get(frame)!;
     const srcCorridors = pickCorridors(
       corridors,
@@ -506,6 +772,7 @@ export function routeEdges(
       outerLeftX,
       outerRightX,
       MAX_CORRIDORS,
+      outerFirst,
     );
     const dstCorridors = pickCorridors(
       corridors,
@@ -513,6 +780,7 @@ export function routeEdges(
       outerLeftX,
       outerRightX,
       1,
+      outerFirst,
     );
 
     const context: RouteContext = {
@@ -523,6 +791,9 @@ export function routeEdges(
       outerRightX,
       placed,
       flipPlaced: flipped,
+      obstacles,
+      exitBoxBottom: boxBottomOf(edge.from, frame),
+      clearY: (y: number) => clearYWith(borderYsOf(frame), y),
     };
     const candidates = buildCandidates(
       a,
@@ -531,6 +802,9 @@ export function routeEdges(
       isInline[index]!,
       exitFraction,
       entryFraction,
+      openSidesInFrame(nodeMeta.get(edge.from)!, frame),
+      openSidesInFrame(nodeMeta.get(edge.to)!, frame),
+      outerFirst,
       srcCorridors,
       dstCorridors,
       context,

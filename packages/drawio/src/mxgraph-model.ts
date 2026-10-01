@@ -35,8 +35,27 @@ export function buildDrawio(input: BuildDrawioInput): DrawioArtifact {
     `${indent(4)}<mxCell id="1" parent="0"/>`,
   );
 
-  // 连线最先输出：mxGraph 按 cell 声明顺序决定绘制层级，后声明的画在上层。
-  // 连线放在最前面，节点与分组就会覆盖连线，避免连线压住卡片文字（实测确认）。
+  // 绘制层级（mxGraph 按 cell 声明顺序决定，后声明的画在上层）：分组框 → 节点 → 连线。
+  // 连线放最上层：走线器已保证除首尾锚点外不与任何节点矩形相交，所以压在卡片上面的
+  // 只有箭头落点那一圈；反之若连线在下层，分组框的不透明填充（`filled` 变体）会把
+  // 「节点 → 组边界」那一段盖掉，看起来像连线从分组开始（实测确认）。
+  const sortedGroups = [...layout.groups].sort((a, b) => a.level - b.level);
+  for (const group of sortedGroups) {
+    lines.push(
+      `${indent(4)}<mxCell id="${escapeXmlAttribute(group.id)}" value="${escapeXmlAttribute(buildGroupLabel(group.title))}" style="${escapeXmlAttribute(groupStyle(group.variant))}" vertex="1" parent="${escapeXmlAttribute(group.parentId ?? '1')}">`,
+      `${indent(5)}<mxGeometry x="${formatNumber(group.x)}" y="${formatNumber(group.y)}" width="${formatNumber(group.width)}" height="${formatNumber(group.height)}" as="geometry"/>`,
+      `${indent(4)}</mxCell>`,
+    );
+  }
+
+  for (const node of layout.nodes) {
+    lines.push(
+      `${indent(4)}<mxCell id="${escapeXmlAttribute(node.id)}" value="${escapeXmlAttribute(buildNodeLabel(node))}" style="${escapeXmlAttribute(nodeStyle(node.variant))}" vertex="1" parent="${escapeXmlAttribute(node.groupId ?? '1')}">`,
+      `${indent(5)}<mxGeometry x="${formatNumber(node.x)}" y="${formatNumber(node.y)}" width="${formatNumber(node.width)}" height="${formatNumber(node.height)}" as="geometry"/>`,
+      `${indent(4)}</mxCell>`,
+    );
+  }
+
   for (const edge of layout.edges) {
     lines.push(
       `${indent(4)}<mxCell id="${escapeXmlAttribute(edge.id)}" value="${escapeXmlAttribute(edge.label ?? '')}" style="${escapeXmlAttribute(edgeStyle(edge.style))}" edge="1" parent="1" source="${escapeXmlAttribute(edge.from)}" target="${escapeXmlAttribute(edge.to)}">`,
@@ -59,24 +78,6 @@ export function buildDrawio(input: BuildDrawioInput): DrawioArtifact {
     }
 
     lines.push(`${indent(4)}</mxCell>`);
-  }
-
-  // 分组容器：按层级升序输出，保证父 cell 先于子 cell
-  const sortedGroups = [...layout.groups].sort((a, b) => a.level - b.level);
-  for (const group of sortedGroups) {
-    lines.push(
-      `${indent(4)}<mxCell id="${escapeXmlAttribute(group.id)}" value="${escapeXmlAttribute(buildGroupLabel(group.title))}" style="${escapeXmlAttribute(groupStyle(group.variant))}" vertex="1" parent="${escapeXmlAttribute(group.parentId ?? '1')}">`,
-      `${indent(5)}<mxGeometry x="${formatNumber(group.x)}" y="${formatNumber(group.y)}" width="${formatNumber(group.width)}" height="${formatNumber(group.height)}" as="geometry"/>`,
-      `${indent(4)}</mxCell>`,
-    );
-  }
-
-  for (const node of layout.nodes) {
-    lines.push(
-      `${indent(4)}<mxCell id="${escapeXmlAttribute(node.id)}" value="${escapeXmlAttribute(buildNodeLabel(node))}" style="${escapeXmlAttribute(nodeStyle(node.variant))}" vertex="1" parent="${escapeXmlAttribute(node.groupId ?? '1')}">`,
-      `${indent(5)}<mxGeometry x="${formatNumber(node.x)}" y="${formatNumber(node.y)}" width="${formatNumber(node.width)}" height="${formatNumber(node.height)}" as="geometry"/>`,
-      `${indent(4)}</mxCell>`,
-    );
   }
 
   lines.push(

@@ -55,6 +55,24 @@ export interface RankBand {
   rect: Rect;
 }
 
+/**
+ * 条目四个侧是否「朝外开放」：该侧对着本单元的留白，走出去不会撞到同单元的其他条目。
+ * 走线器允许在这些侧上取端口，从而省掉「先下潜再绕」的弯折。
+ */
+export interface OpenSides {
+  mainStart: boolean;
+  mainEnd: boolean;
+  crossStart: boolean;
+  crossEnd: boolean;
+}
+
+const closedSides = (): OpenSides => ({
+  mainStart: false,
+  mainEnd: false,
+  crossStart: false,
+  crossEnd: false,
+});
+
 /** 走线器需要的节点拓扑位置信息 */
 export interface NodeMeta {
   unitKey: string;
@@ -62,6 +80,9 @@ export interface NodeMeta {
   /** 所属簇锚点 id */
   clusterId: string;
   isRib: boolean;
+  /** 该条目所在单元的方向（`open` 是单元轴口径，映射到走线框架时要按它转置） */
+  unitDirection: LayoutDirection;
+  open: OpenSides;
 }
 
 export interface Placement {
@@ -93,6 +114,8 @@ interface Item {
   /** 物理尺寸（节点恒为 240 × h；分组为其包络框） */
   physWidth: number;
   physHeight: number;
+  /** 四个侧是否朝外开放（在**本单元**的轴口径下） */
+  open: OpenSides;
   /** 虚拟轴绝对坐标（相对根画布原点，口径由**父单元**的方向决定） */
   mainAbs: number;
   crossAbs: number;
@@ -213,6 +236,7 @@ function buildUnit(
       clusterId: node.id,
       rib: null,
       unitDirection,
+      open: closedSides(),
       physWidth: size.width,
       physHeight: size.height,
       mainAbs: 0,
@@ -234,6 +258,7 @@ function buildUnit(
     clusterId: key,
     rib: null,
     unitDirection,
+    open: closedSides(),
     physWidth: 0,
     physHeight: 0,
     mainAbs: 0,
@@ -294,6 +319,32 @@ function planUnit(unit: Item, ctx: Context): UnitPlan {
 
   const columnCount = clustersPerRow.reduce((max, row) => Math.max(max, row.length), 0);
   ctx.stats.maxColumns = Math.max(ctx.stats.maxColumns, columnCount);
+
+  // 标注「朝外开放」的侧：最外层那一行/那一列才有留白可走，其余侧都紧挨着同单元的其他条目。
+  // 走线器据此允许在这些侧取端口，省掉「先下潜再绕外圈」的弯折（用户裁决）。
+  if (ranks.length > 0) {
+    const firstRank = ranks[0]!;
+    const lastRank = ranks[ranks.length - 1]!;
+    rows.forEach((row, index) => {
+      const rank = ranks[index]!;
+      const head = row[0];
+      const tail = row[row.length - 1];
+      for (const item of row) {
+        if (rank === firstRank) {
+          item.open.mainStart = true;
+        }
+        if (rank === lastRank) {
+          item.open.mainEnd = true;
+        }
+      }
+      if (head !== undefined) {
+        head.open.crossStart = true;
+      }
+      if (tail !== undefined) {
+        tail.open.crossEnd = true;
+      }
+    });
+  }
 
   const columnWidth: number[] = [];
   for (let index = 0; index < columnCount; index += 1) {
@@ -456,6 +507,8 @@ export function placeSpec(
         rank: item.rank,
         clusterId: item.clusterId,
         isRib: item.rib !== null,
+        unitDirection: item.unitDirection,
+        open: item.open,
       });
     }
 

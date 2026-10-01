@@ -40,7 +40,7 @@ export const UNIT_PADDING_X = 20;
 /** 单元内边距：非标题方向的收尾侧 */
 export const UNIT_PADDING_BOTTOM = 20;
 /** 单元内边距：留给组标题的一侧（画法上恒定在物理上方） */
-export const UNIT_HEADER_HEIGHT = 36;
+export const UNIT_HEADER_HEIGHT = 24;
 
 // ── 虚拟双轴间距 ─────────────────────────────────────────────────
 
@@ -67,12 +67,14 @@ export const LANE_STEP = 8;
 export const LANE_LIMIT = 12;
 /** 判定「相邻层正向边」的最大层间距；超过即走跨层绕行通道 */
 export const MAX_LANE_GAP = 200;
-/** 跨多层绕行时，安全栏杆（通道）与内容边缘的距离 */
-export const OUTER_CHANNEL_GAP = 24;
-/** 反向边顶部栏杆预留高度（栏杆中心距内容顶部） */
-export const TOP_RAIL_HEIGHT = 28;
+/** 跨多层绕行时，外侧通道（栏杆）与内容边缘的距离 */
+export const OUTER_CHANNEL_GAP = 56;
+/** 反向边顶部栏杆预留高度（栏杆距内容顶部） */
+export const TOP_RAIL_HEIGHT = 56;
 /** 碰撞检测时给节点矩形留的安全边距 */
 export const COLLISION_PADDING = 4;
+/** 车道 / 走廊与分组框边框之间要保持的净距 */
+export const LANE_CLEARANCE = 12;
 
 /** 画布外边距（画布尺寸自适应时外扩） */
 export const CANVAS_MARGIN = 40;
