@@ -16,6 +16,9 @@ tmp/
 .env
 .env.local
 
+# tooling caches
+.codegraph/
+
 # editor / os
 .idea/
 .DS_Store

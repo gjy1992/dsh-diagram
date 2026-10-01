@@ -27,6 +27,8 @@ interface RouteContext {
   rects: Map<string, Rect>;
   skipped: Set<string>;
   topRailY: number;
+  /** 底部栏杆 y（帧口径）；与 `topRailY` 对称，供「两端外绕」候选下行绕行 */
+  bottomRailY: number;
   outerLeftX: number;
   outerRightX: number;
   /** 已占用的线段（统一存物理口径），用于避免连线互相重叠 */
@@ -380,8 +382,8 @@ function buildCandidates(
 
   // ⑦ 外圈侧向直连：源与目标在**同一侧**都有开放端口（都在首列或都在末列）时，
   //    走「同侧出 → 外侧通道 → 同侧入」，只要 2 折（05 的跨域/回流由 4 折变 2 折）。
-  //    自加一道「不与已放置连线十字相交」的约束：相邻长边的短横段很容易穿过彼此的竖段
-  //    （05 实测过 5 处），不满足就整体让位给 ④ / ⑤。
+  //    「不与已放置连线十字相交」由主循环的统一筛选把关（见 routeEdges 的三轮裁决）：
+  //    候选族各自设闸会让同一族里更省的走法被自己否掉、更绕的族反而因没设闸而中选（03 的 `持久化` 实测）。
   for (const side of ['crossStart', 'crossEnd'] as const) {
     candidates.push((offset) => {
       if (!openA[side] || !openB[side]) {
@@ -397,8 +399,7 @@ function buildCandidates(
           ? Math.min(a.x, b.x) - LANE_STEP - Math.abs(offset)
           : Math.max(aRight, bRight) + LANE_STEP + Math.abs(offset);
       const route = simplify([from, { x, y: from.y }, { x, y: to.y }, to]);
-      const segments = toSegments(route);
-      if (segments.length === 0 || crossesPlaced(segments, context)) {
+      if (toSegments(route).length === 0) {
         return null;
       }
       return route;
@@ -427,18 +428,58 @@ function buildCandidates(
         if (approachY <= from.y) {
           return null;
         }
-        const route = simplify([
+        return simplify([
           from,
           { x, y: from.y },
           { x, y: approachY },
           { x: toTop.x, y: approachY },
           toTop,
         ]);
-        if (crossesPlaced(toSegments(route), context)) {
-          return null; // 与已放置连线十字相交就让位给普通绕行
-        }
-        return route;
       });
+    }
+  }
+
+  // ⑨ 两端外绕（用户裁决）：源从**主轴对外侧**（首行上 / 末行下）出边、目标从**次轴对外侧**
+  //    （首列左 / 末列右）入边，中间借「顶/底栏杆 + 左右外侧栏杆」绕行。
+  //    「跨层连线优先两端都走对外侧」的落点：03 的 `持久化` 由此 4 折降到 3 折，且不再横切 `拉取资源`。
+  //    只在长边（本框架下 outerFirst）上放行，且只服务正向边（目标在上方时交给 ⑥ / ⑤）。
+  if (outerFirst) {
+    for (const mainSide of ['mainStart', 'mainEnd'] as const) {
+      if (!openA[mainSide]) {
+        continue;
+      }
+      const exitSide: Side = mainSide === 'mainStart' ? 'top' : 'bottom';
+      for (const crossSide of ['crossStart', 'crossEnd'] as const) {
+        if (!openB[crossSide]) {
+          continue;
+        }
+        const enterSide: Side = crossSide === 'crossStart' ? 'left' : 'right';
+        candidates.push((offset) => {
+          if (!bBelow) {
+            return null;
+          }
+          const from = anchorOf(a, exitSide, exitFraction);
+          const to = anchorOf(b, enterSide, entryFraction);
+          // 栏杆与 railXAt 同口径：只许向更外侧漂移
+          const railY =
+            mainSide === 'mainStart'
+              ? context.topRailY - Math.abs(offset)
+              : context.bottomRailY + Math.abs(offset);
+          const x = railXAt(
+            crossSide === 'crossStart' ? context.outerLeftX : context.outerRightX,
+            offset,
+            context,
+          );
+          // 栏杆必须落在两端端口的外侧，否则整条线路会折返
+          if (mainSide === 'mainStart' ? railY > from.y - EPS : railY < from.y + EPS) {
+            return null;
+          }
+          if (crossSide === 'crossStart' ? x > to.x - EPS : x < to.x + EPS) {
+            return null;
+          }
+          return simplify([from, { x: from.x, y: railY }, { x, y: railY }, { x, y: to.y }, to]);
+        });
+      }
     }
   }
 
@@ -760,6 +801,7 @@ export function routeEdges(
 
     // 框架内的内容尺寸与外侧栏杆位置
     const frameWidth = flipped ? content.height : content.width;
+    const frameHeight = flipped ? content.width : content.height;
     const outerLeftX = -OUTER_CHANNEL_GAP;
     const outerRightX = frameWidth + OUTER_CHANNEL_GAP;
 
@@ -810,6 +852,8 @@ export function routeEdges(
       rects,
       skipped: new Set([edge.from, edge.to]),
       topRailY: -TOP_RAIL_HEIGHT,
+      // 底栏杆与顶栏杆取同一净距（OUTER_CHANNEL_GAP 与 TOP_RAIL_HEIGHT 同为 LANE_CLEARANCE）
+      bottomRailY: frameHeight + OUTER_CHANNEL_GAP,
       outerLeftX,
       outerRightX,
       placed,
@@ -838,31 +882,25 @@ export function routeEdges(
       placed.push(...segments.map((segment) => (flipped ? flipSegment(segment) : segment)));
     };
 
-    let chosen: LayoutPoint[] | null = null;
-    for (const candidate of candidates) {
-      for (let step = 0; step < LANE_LIMIT && chosen === null; step += 1) {
-        const points = candidate(laneOffset(step));
-        if (points === null) {
-          break;
-        }
-        const simplified = simplify(points);
-        const segments = toSegments(simplified);
-        if (segments.length === 0) {
-          continue;
-        }
-        if (collides(segments, context) || overlapsPlaced(segments, context)) {
-          continue;
-        }
-        commit(segments);
-        chosen = simplified;
-      }
-      if (chosen !== null) {
-        break;
-      }
-    }
+    /**
+     * 三轮裁决（用户裁决）：把「十字交叉」从各候选族的私有闸门提升为**全局**标准。
+     * ① 干净轮：碰撞 / 重叠 / 交叉 三者皆不许；
+     * ② 让步轮：只不许碰撞与重叠（交叉作为必要代价被接受）；
+     * ③ 兜底轮：只不许碰撞（重叠也接受）。
+     * 候选族内的先后顺序仍是**同一轮内**的优先级，因此「能少一折就少一折」在干净轮里成立；
+     * 而「更省的走法 vs 不交叉」的取舍由轮次决定，不再取决于哪个族恰好设了闸。
+     */
+    const acceptors: Array<(segments: Segment[]) => boolean> = [
+      (segments) =>
+        !collides(segments, context) &&
+        !overlapsPlaced(segments, context) &&
+        !crossesPlaced(segments, context),
+      (segments) => !collides(segments, context) && !overlapsPlaced(segments, context),
+      (segments) => !collides(segments, context),
+    ];
 
-    // 全部候选都失败：放宽到「只做节点碰撞检测」再试一轮
-    if (chosen === null) {
+    let chosen: LayoutPoint[] | null = null;
+    for (const accept of acceptors) {
       for (const candidate of candidates) {
         for (let step = 0; step < LANE_LIMIT && chosen === null; step += 1) {
           const points = candidate(laneOffset(step));
@@ -871,7 +909,7 @@ export function routeEdges(
           }
           const simplified = simplify(points);
           const segments = toSegments(simplified);
-          if (segments.length === 0 || collides(segments, context)) {
+          if (segments.length === 0 || !accept(segments)) {
             continue;
           }
           commit(segments);
@@ -880,6 +918,9 @@ export function routeEdges(
         if (chosen !== null) {
           break;
         }
+      }
+      if (chosen !== null) {
+        break;
       }
     }
 
