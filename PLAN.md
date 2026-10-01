@@ -556,7 +556,7 @@ plugin/
 | :--- | :--- | :--- | :--- |
 | **T5** | 卡片像素级视觉回归 | 现在**可做了**（C3 与 P2.6 更正已给出绕法：先卸掉宿主折叠行的隐藏再截图） | 低 |
 | **T11** | `layout` 的手动通道 | 已裁决 layout 不进模型文档、留给用户手改 YAML；「改完看效果」由 T1 的 `yaml_to_drawio` 承担 | 由 T1 覆盖 |
-| **T12** | 发布通路 | `dsh plugin add @gjy_1992/dsh-diagram` 需 npm 发布 + 版本流程（PRD §6.4） | **押后**（用户裁决） |
+| **T12** | 发布通路 | **开工（用户裁决 2026-10-01）**：仓库侧已就绪（去掉 `private`、补 README、载荷 8 文件），见 §P2.16；剩下的是需要凭据的两步（npm 登录 / GitHub 可见性）与许可证决策 | 进行中 |
 
 ### 不做（用户裁决，留档避免反复讨论）
 
@@ -941,3 +941,43 @@ T9（PRD Phase 3 行内 ` ```arch-yaml `）的挂起理由本轮只做了一次�
 风险：契约是内部契约（无 README、不在 Service 目录里，`uiConversation` 是 scoped 服务）；节点 shape 不能 import（要手写、无类型检查）；落点由 Conversation 层裁决（**必须 spike 实测**）；流式事件需要处理；`ChatNodeKind` 是 owner 的表，我们用的是表外 kind（catalog 无 `allowedKeys` 闸门，practices 也认，但属"靠约定不靠类型"）。
 
 建议的下手顺序：① 30 分钟 spike 只验「注册新 key + definition → 出不出行、落在哪」；② 过了再谈实现；③ 验收口径写死位置与"不重复出图"；④ 仍然不碰 DOM、不接管 `assistant-step`。
+
+## P2.16 T12 发布通路开工（2026-10-01）
+
+### 已定的口径
+
+| 项 | 取值 | 理由 |
+| :--- | :--- | :--- |
+| 版本语义 | **保持 `0.2.0`**（用户裁决） | 跟插件自己的进度走。它与 dsh 运行时版本号**巧合相同**，但那不是契约 —— 真正的闸门是 §P2.11 的 `peerDependencies` |
+| 包名 | `@gjy_1992/dsh-diagram`（scoped） | 需要该 scope 的 npm 发布权限 |
+| registry | `https://registry.npmjs.org/`（npm 配置现值） | —— |
+
+### 本轮做完的（都不需要凭据）
+
+| 改动 | 说明 |
+| :--- | :--- |
+| `plugin/package.json` 去掉 `"private": true` | 这是发布唯一硬阻塞：`npm publish` 对 private 包直接拒绝（`npm pack` 不受影响，所以 §P2.14 的载荷检查仍然有效） |
+| 新增 `plugin/README.md` | 安装方式、三个工具的分工、YAML 速查、`.drawio` 往返回来的口径、结构说明；已加入 `files` |
+| `files` 白名单 | 载荷从 7 → **8 个文件**（`README.md` 进包；`plugin/src/**`、`scripts/`、`PLAN.md`、`tmp/` 仍然进不去） |
+| 重新打包 | `pnpm build:plugin` 产物**逐字节无变化**（确定性：`git status` 只有 package.json 与新增 README） |
+| 回归 | `pnpm verify:activation` exit 0（去掉 private 不影响兼容性预检与激活） |
+
+### 还没做的（都卡在凭据 / 决策上，不是代码）
+
+| # | 项 | 现状 | 怎么解 |
+| :--- | :--- | :--- | :--- |
+| 1 | **npm 发布** | 本机 npm **未登录**（`npm whoami` → `ENEEDAUTH`） | 先 `npm login`（或配 `~/.npmrc` 的 token，**不要**落进仓库），再 `npm publish --access public --prefix plugin`（scoped 包首次发布必须显式 `--access public`，否则默认 private） |
+| 2 | **GitHub 仓库可见性** | remote 为 `https://github.com/gjy1992/dsh-diagram.git`；本机**没有 `gh`**，也没有 `GITHUB_TOKEN`/`GH_TOKEN` | 用有 `repo` 权限的 token 调 `PATCH /repos/gjy1992/dsh-diagram {"private":false}`，或直接在 GitHub 设置页改（Settings → General → Danger Zone → Change visibility） |
+| 3 | **许可证** | 仓库里**没有 `LICENSE` 文件**，`package.json` 也没有 `license` 字段 | 公开仓库 + 发 npm 之前必须定。不写 = 默认「保留所有权利」，别人拿到也用不了。定完要落到：根 `LICENSE` + `plugin/package.json` 的 `license` 字段（插件 README 里的「许可」小节指向根目录） |
+| 4 | 发布后验证 | 未做 | 发布后按 §P2.12 的口径验一遍真实安装：`plugin_manager install_bundle target: @gjy_1992/dsh-diagram`（走 registry 而不是 `link:`），再跑一次 `pnpm verify:activation` 的等价检查 |
+
+### 发布前的回归清单（本机可跑，全绿）
+
+```bash
+pnpm build            # tsc strict
+pnpm build:plugin     # 两半打包（应无 diff）
+pnpm build:examples   # 引擎端到端
+pnpm audit:routing    # 走线硬性不变量
+pnpm verify:activation # 宿主半激活自检
+# pnpm typecheck:plugin 本机仍缺 dsh 检出，见 T14
+```
