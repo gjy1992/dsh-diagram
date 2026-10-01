@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "type": "module",
   "description": "dsh-diagram：用 YAML DSL 生成深色卡片式系统架构图，对话内 SVG 预览 + .drawio 导出",
+  "license": "MIT",
   "icon": "./icon.svg",
   "exports": {
     ".": "./index.js",
@@ -34,6 +35,7 @@
     "cordis.patch.yml",
     "icon.svg",
     "locale",
-    "README.md"
+    "README.md",
+    "README.zh.md"
   ]
 }

@@ -556,7 +556,7 @@ plugin/
 | :--- | :--- | :--- | :--- |
 | **T5** | 卡片像素级视觉回归 | 现在**可做了**（C3 与 P2.6 更正已给出绕法：先卸掉宿主折叠行的隐藏再截图） | 低 |
 | **T11** | `layout` 的手动通道 | 已裁决 layout 不进模型文档、留给用户手改 YAML；「改完看效果」由 T1 的 `yaml_to_drawio` 承担 | 由 T1 覆盖 |
-| **T12** | 发布通路 | **开工（用户裁决 2026-10-01）**：仓库侧已就绪（去掉 `private`、补 README、载荷 8 文件），见 §P2.16；剩下的是需要凭据的两步（npm 登录 / GitHub 可见性）与许可证决策 | 进行中 |
+| **T12** | 发布通路 | **进行中（用户裁决 2026-10-01 开工）**：仓库已 public、MIT 已落、双语 README 已写、GitHub topic 已打、载荷 10 文件；**只剩 npm 登录后发布这一步**，见 §P2.16 | 进行中 |
 
 ### 不做（用户裁决，留档避免反复讨论）
 
@@ -966,10 +966,47 @@ T9（PRD Phase 3 行内 ` ```arch-yaml `）的挂起理由本轮只做了一次�
 
 | # | 项 | 现状 | 怎么解 |
 | :--- | :--- | :--- | :--- |
-| 1 | **npm 发布** | 本机 npm **未登录**（`npm whoami` → `ENEEDAUTH`） | 先 `npm login`（或配 `~/.npmrc` 的 token，**不要**落进仓库），再 `npm publish --access public --prefix plugin`（scoped 包首次发布必须显式 `--access public`，否则默认 private） |
-| 2 | **GitHub 仓库可见性** | remote 为 `https://github.com/gjy1992/dsh-diagram.git`；本机**没有 `gh`**，也没有 `GITHUB_TOKEN`/`GH_TOKEN` | 用有 `repo` 权限的 token 调 `PATCH /repos/gjy1992/dsh-diagram {"private":false}`，或直接在 GitHub 设置页改（Settings → General → Danger Zone → Change visibility） |
-| 3 | **许可证** | 仓库里**没有 `LICENSE` 文件**，`package.json` 也没有 `license` 字段 | 公开仓库 + 发 npm 之前必须定。不写 = 默认「保留所有权利」，别人拿到也用不了。定完要落到：根 `LICENSE` + `plugin/package.json` 的 `license` 字段（插件 README 里的「许可」小节指向根目录） |
+| 1 | **npm 发布** | 本机 npm **未登录**（`npm whoami` → `ENEEDAUTH`；`~/.npmrc` 不存在） | 先 `npm login`（或配 `~/.npmrc` 的 token，**不要**落进仓库），再 `npm publish --access public --prefix plugin`（scoped 包首次发布必须显式 `--access public`，否则默认 private） |
+| 2 | ~~GitHub 仓库可见性~~ | ✅ **已完成**：`gjy1992/dsh-diagram` → `visibility=public`（用 GCM 里已存的 git 凭据调 `PATCH /repos/gjy1992/dsh-diagram`；公开前扫过全部已跟踪文件：无 token / 私钥 / 本机路径 / 邮箱）；匿名 GET 复核 HTTP 200 | —— |
+| 3 | ~~许可证~~ | ✅ **已完成**：用户裁决 **MIT** —— 根 `LICENSE` + `plugin/LICENSE`（npm 的 always-include 规则保证进包）+ 两个 `package.json` 的 `license` 字段 | —— |
 | 4 | 发布后验证 | 未做 | 发布后按 §P2.12 的口径验一遍真实安装：`plugin_manager install_bundle target: @gjy_1992/dsh-diagram`（走 registry 而不是 `link:`），再跑一次 `pnpm verify:activation` 的等价检查 |
+
+### 双语 README（按 dsh 包文档格式）
+
+用户要求「按 dsh 对 dsh plugin 的格式要求写双语 README」。格式取自随包发布的 dsh 包本身（`dsh-tool-todo` / `dsh-client-ui-deliverables` 等）：
+
+| 要素 | 取值 |
+| :--- | :--- |
+| YAML front matter | `description:`（一句话：是什么 + 给谁看）+ `kind:` |
+| 标题 | `# <包名>` |
+| 语言切换行 | `README.md` 里 `English | [中文](README.zh.md)`；`README.zh.md` 里 `[English](README.md) | 中文` |
+| 章节骨架 | `## Summary` → `## Table of Contents` → `## Use this package` → `## Understand the implementation` → `## Further Exploration` → `## Model Experience` → `## Known Limitations and Deferred Work`（含 `### Dev Note`）→ License |
+| 两侧镜像 | en/zh 的**标题层级与顺序完全一致**（dsh 的 `verify-translation-pairing` 就是按分节哈希校验这件事的） |
+
+本轮产出两对：
+
+| 文件 | kind | 说明 |
+| :--- | :--- | :--- |
+| `README.md` / `README.zh.md`（仓库根） | `repository-reference` | 公开仓库的门面：Summary、安装插件 / 命令行跑引擎 / 验证命令表、四个包与插件两半的结构、布局为什么自研、Model Experience、已知限制（T9 挂起、T14、T5、Windows 脚本） |
+| `plugin/README.md` / `plugin/README.zh.md` | `package-reference` | npm 页面：安装（npm 与本地 bundle 两种）、三个工具表、YAML DSL 速查、`.drawio` 往返、两半与打包（含 peer 路由那条坑）、文件落在哪、Model Experience、限制 |
+
+两个刻意的取舍：
+
+1. **不写 `README.i18n.yaml`。** 那是 dsh monorepo 里 `pnpm run verify-translation-pairing --write <path>` 生成的**分节哈希一致性记录**（`en`/`zh` 各 16 位十六进制），该工具不随包发布。自己编一套哈希等于伪造记录 —— 比没有更糟。我们只保证两侧标题结构镜像。
+2. **`plugin/README.md` 由中文改为英文**（原来那份中文移到 `plugin/README.zh.md`），因为 dsh 的约定是 `README.md` 放英文、`README.zh.md` 放中文。
+
+顺带修掉两处与发布相关的陈旧内容：根 `package.json` 的 `description`（还写着「Phase 1 … ELK 布局」，ELK 早已移除）与新增的 `pnpm roundtrip` 脚本（README 的验证表引用了 `scripts/roundtrip-check.ts`，此前只有裸文件、没有 npm script）。
+
+### GitHub topic
+
+给公开仓库打上 topic，让它在 GitHub 上被识别/检索为 dsh 插件。用 `PUT /repos/{owner}/{repo}/topics`（**会整体替换** → 先 GET 现有值再合并）：
+
+| topic | 理由 |
+| :--- | :--- |
+| `dsh-plugin` | 用户要求的那一个：声明这是一个 dsh 插件 |
+| `deepseek-harness` | 宿主项目 |
+| `cordis-plugin` | dsh 的插件体系（Cordis 微内核） |
+| `architecture-diagram` / `drawio` / `yaml` | 用途与产物 |
 
 ### 发布前的回归清单（本机可跑，全绿）
 
@@ -978,6 +1015,7 @@ pnpm build            # tsc strict
 pnpm build:plugin     # 两半打包（应无 diff）
 pnpm build:examples   # 引擎端到端
 pnpm audit:routing    # 走线硬性不变量
+pnpm roundtrip        # YAML ⇄ .drawio 幂等
 pnpm verify:activation # 宿主半激活自检
 # pnpm typecheck:plugin 本机仍缺 dsh 检出，见 T14
 ```

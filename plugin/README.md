@@ -1,83 +1,130 @@
+---
+description: "The installable DeepSeek Harness bundle for dsh-diagram: three tools (render_architecture, yaml_to_drawio, drawio_to_yaml) over a YAML architecture DSL, a dark preview card rendered inside the conversation, plaintext .drawio export, and the self-healing structured-diagnostics channel."
+kind: "package-reference"
+---
+
 # @gjy_1992/dsh-diagram
 
-用 YAML 描述架构、由引擎自动排版、在对话里出深色卡片预览，并可一键导出原生 `.drawio`。
-这是 [dsh（DeepSeek Harness）](https://github.com/gjy1992/dsh-diagram) 的可安装 bundle：装上就会
-向 Agent 注册三个工具，并在对话里接管对应的调用行。
+English | [中文](README.zh.md)
 
-YAML 里**只写语义**（谁包含谁、谁调用谁），坐标、折行、分层、正交走线、配色全部由引擎算 ——
-模型不需要（也不允许）输出任何坐标或十六进制色值。
+## Summary
 
-## 要求
+This package is the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) bundle for [dsh-diagram](https://github.com/gjy1992/dsh-diagram). Installing it registers three tools and takes over their rows in the conversation: the model (or a file on disk) describes a system in YAML — who contains whom, who calls whom — and the engine computes everything else. The description carries **semantics only**: coordinates, line wrapping, layering, orthogonal routing, grouping envelopes, and colors are never written by a model. A preview card renders the diagram in the dark theme inside the chat, and a plaintext `.drawio` file can be exported for further hand-editing in draw.io. Validation failures come back as one structured report — every structural, reference, and hierarchy problem at once, each with a path, a code, and a did-you-mean candidate — so the model can fix them in a single retry.
 
-| 项 | 要求 |
-| :--- | :--- |
-| dsh | `>= 0.1.7-rc.2`（`peerDependencies` 同时是 dsh 的兼容性闸门，不匹配时整行会被 disable） |
-| 运行环境 | 无额外依赖。宿主半只 import dsh 自带的 `@deepseek-ai/dsh-tools`，其余引擎代码在打包时已内联 |
+## Table of Contents
 
-## 安装
+- [Use this package](#use-this-package)
+- [Understand the implementation](#understand-the-implementation)
+- [Further Exploration](#further-exploration)
+- [Model Experience](#model-experience)
+- [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [Dev Note](#dev-note)
 
-在 dsh 里用插件管理器安装（推荐）：
+## Use this package
 
-```
-plugin_manager  install_bundle   target: @gjy_1992/dsh-diagram
-```
-
-或命令行：
+### Install
 
 ```bash
 dsh plugin add @gjy_1992/dsh-diagram
 ```
 
-装上后**宿主半的改动需要重启 dsh 才生效**（Node 会按 URL 缓存模块作业），客户端半刷新页面即生效。
+Or install a checkout directly (the plugin directory is a self-contained bundle):
 
-## 三个工具
+```
+plugin_manager  install_bundle   target: <repo>\plugin
+```
 
-| 工具 | 什么时候用 | 入参 |
+| Requirement | Value |
+| :--- | :--- |
+| `dsh` | `>= 0.1.7-rc.2`. The `peerDependencies` entry doubles as dsh's compatibility gate: a runtime outside the range disables the row instead of loading it |
+| Runtime dependencies | none. The host half imports only dsh's own `@deepseek-ai/dsh-tools`; the rest of the engine is inlined at build time |
+
+A change to the **host half** needs a `dsh` restart (Node caches module jobs by URL); the **client half** reloads on a page refresh.
+
+### The three tools
+
+| Tool | When to use it | Arguments |
 | :--- | :--- | :--- |
-| `render_architecture` | 模型自己内联写 YAML 出图 | `title`、`yaml_spec`、`save_drawio?`（缺省 false） |
-| `yaml_to_drawio` | 用户手改过某个 `.yaml`，要看效果 | `path`、`save_drawio?`（缺省 **true**，落在 YAML 同目录） |
-| `drawio_to_yaml` | 用户在 draw.io 里改过图，要捡回语义 | `path` |
+| `render_architecture` | the model writes the YAML inline | `title`, `yaml_spec`, `save_drawio?` (default `false`) |
+| `yaml_to_drawio` | a human edited a `.yaml` and wants to see the result | `path`, `save_drawio?` (default **`true`**, written next to the YAML) |
+| `drawio_to_yaml` | a human edited the diagram in draw.io and wants the semantics back | `path` |
 
-三个工具的失败通道都是**结构化诊断**：一次报全部问题（结构 + 引用 + 层级），带 `path`、错误码和
-did-you-mean 候选，模型据此自愈重试。
+All three fail through the same channel: one structured report with `path`, a code, and did-you-mean candidates.
 
-## YAML 速查
+### The YAML DSL
 
-只有 `nodes` 与 `edges` 两个列表本身必填，其余都可选：
+Only `nodes` and `edges` are required; everything else is optional.
 
 ```yaml
 version: "1.0"
-meta:    { title, desc, summary, guide }        # 画布标题与导语
-groups:  [{ id, title, variant, parent }]       # 嵌套只用 parent 单向声明，禁 children，最深 3 层
+meta:    { title, desc, summary, guide }        # canvas title, subtitle, summary, reading guide
+groups:  [{ id, title, variant, parent }]       # nesting is declared by `parent` only; no `children` array; depth <= 3
 nodes:   [{ id, title, group, desc, variant, items: [rpc:OrderQuery] }]
 edges:   [{ from, to, label, style }]
-layout:  { direction, inner_direction, max_columns }   # 留给用户手改，不在模型文档里
+layout:  { direction, inner_direction, max_columns }   # kept out of the model-facing tool description
 ```
 
-| 字段 | 取值 |
+| Field | Values |
 | :--- | :--- |
-| `node.variant` | `default` 普通 · `primary` 核心入口 · `danger` 风险/待下线 · `warning` 待治理 · `muted` 弱化 |
-| `group.variant` | `dashed` 虚线透明框（默认）· `filled` 实色填充框 |
-| `edge.style` | `solid` 单向实线（默认）· `dashed` 虚线 · `bidirectional` 双向 |
+| `node.variant` | `default` ordinary · `primary` core entry · `danger` risk / to be retired · `warning` to be governed · `muted` de-emphasized |
+| `group.variant` | `dashed` dashed transparent frame (default) · `filled` filled frame |
+| `edge.style` | `solid` (default) · `dashed` · `bidirectional` |
 
-`node.items` 用来列该模块承载的 RPC / 接口清单，卡片会按行数自动加高。
+`node.items` lists the RPCs or interfaces a module carries; the card grows a line per item.
 
-## 从 `.drawio` 回到 YAML
+### Working with `.drawio`
 
-`drawio_to_yaml` 能把（明文或 draw.io 默认压缩保存的）`.drawio` 反解成语义 YAML：
-分组、节点、连线的语义字段都能还原；几何坐标会被丢弃（DSL 里没有坐标，重排由引擎重算），
-自由新增的图形、自定义样式、`layout` 三项也会逐条列在 `warnings` 里供人工确认。
+`drawio_to_yaml` converts a `.drawio` file — plaintext or draw.io's default compressed save — back into semantic YAML. Group, node, and edge semantics are restored. Geometry is dropped (the DSL has no coordinates; the engine re-lays-out on the next render), and free-hand shapes, custom styles, and the three `layout` knobs are reported line by line in `warnings` for a human to confirm.
 
-## 结构
+## Understand the implementation
 
-```
-index.js           宿主半（ESM，三个工具；@deepseek-ai/* 外置，其余内联）
-client.js          客户端半（浏览器模块表里的 React 工厂：预览卡片 + 回合末尾预览）
-cordis.patch.yml   把插件行插进 profile 的 patch
-icon.svg           插件管理页卡片图标
-locale/{zh,en}.json 展示标题与描述
-```
+### The two halves
 
-## 许可
+| File | Half | What it is |
+| :--- | :--- | :--- |
+| `index.js` | host | ESM bundle. Registers the three tools; `@deepseek-ai/*` stays external (it must be the runtime's own instance), the whole engine is inlined |
+| `client.js` | client | A browser module-table factory (`window.__ModuleLoader__.load`). Renders the preview card and the end-of-turn preview; `react` comes from the browser module table, everything else is inlined |
+| `cordis.patch.yml` | — | Inserts the `dsh-diagram` row into the profile |
+| `locale/{en,zh}.json` | — | Display title and description, readable without activating the plugin |
+| `icon.svg` | — | Plugin-manager card icon |
 
-见仓库根目录。
+The client half deliberately carries its own copy of the engine and re-parses `yaml_spec` on the spot: the card costs zero model context, and a replayed or forked session reproduces the same diagram without a host round trip. The schema entry point used in the browser excludes Ajv entirely, so the client bundle contains no validator.
+
+### How the halves are built
+
+`scripts/build-plugin.mjs` in the repository runs esbuild twice: the host half as ESM with `@deepseek-ai/*` external, the client half as a CJS body wrapped in the `__ModuleLoader__` envelope with `react`/`react/jsx-runtime` left to the browser module table. A clean rebuild is deterministic — no diff.
+
+The host half imports `@deepseek-ai/dsh-tools`, and that import must resolve to the same module instance the runtime uses. When the plugin is installed as a linked directory, dsh routes that bare specifier through the runtime's package table **only if the package declares it in `peerDependencies`**; without the declaration the import falls through to native resolution and the row fails with a bare `failed to import`.
+
+### Where files land
+
+`yaml_to_drawio` writes next to the YAML file it read (not into the session working directory), naming the file after `meta.title`. `render_architecture` writes into the session working directory only when `save_drawio: true`. Writes go through the host filesystem service, so they obey the session's file policy and appear as workspace changes.
+
+## Further Exploration
+
+- Repository, `prd.md`, `PLAN.md`, and `design.md`: <https://github.com/gjy1992/dsh-diagram> — `PLAN.md` records every measurement and every trap behind this bundle, including the peer-routing requirement above.
+- `examples/` in the repository: five valid specs and one invalid spec that exercises the diagnostics.
+
+## Model Experience
+
+### What the model sees
+
+The tool description is the whole contract: fields, the three enums, the nesting rule, and the ban on coordinates and hex colors. A successful call returns one summary line — `N groups / N nodes / N edges, canvas W×H` — never the XML, so a large diagram does not cost context on every request. The card's data travels through tool-result metadata, which reaches the client but not the model.
+
+### Token effect
+
+The model writes YAML and nothing else. A nine-node diagram with grouped cards and RPC lists is a few hundred tokens; the equivalent raw draw.io XML would be an order of magnitude larger and would still be laid out badly.
+
+## Known Limitations and Deferred Work
+
+- **An inline ` ```arch-yaml ` code-fence preview does not exist.** The host's markdown renderer takes props only — no fence registry, no slot inside it — so the fence always renders as an ordinary code block, and this bundle adds the preview as a card row instead.
+- **The preview is not a pixel-level guarantee.** The geometry-preview pairing is asserted programmatically in the repository (routing invariants, no node crossings), but the rasterized appearance is checked by eye.
+- **Host-half changes need a restart.** Node caches failed *and* successful module jobs by URL, so a fixed import path cannot be retried inside the running process.
+
+### Dev Note
+
+This bundle is built, not hand-written. Edit `plugin/src/**` in the repository and run `pnpm build:plugin`; the committed `index.js` and `client.js` are the build output, and the repository's `pnpm verify:activation` boots a throwaway profile to prove the result activates.
+
+## License
+
+MIT — see the [repository LICENSE](https://github.com/gjy1992/dsh-diagram/blob/master/LICENSE).

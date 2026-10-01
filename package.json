@@ -2,8 +2,9 @@
   "name": "dsh-diagram",
   "version": "0.1.0",
   "private": true,
-  "description": "架构图生成与 draw.io 导出（Phase 1：YAML DSL → 校验 → ELK 布局 → .drawio 明文导出）",
+  "description": "YAML 驱动的架构图引擎（零图布局依赖）+ 可安装的 dsh 插件：对话内深色卡片预览与 .drawio 导出",
   "type": "module",
+  "license": "MIT",
   "packageManager": "pnpm@11.7.0",
   "engines": {
     "node": ">=20"
@@ -17,7 +18,8 @@
     "audit:routing": "tsx scripts/audit-routing.ts",
     "build:plugin": "node scripts/build-plugin.mjs",
     "typecheck:plugin": "node scripts/typecheck-plugin.mjs",
-    "verify:activation": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-plugin-activation.ps1"
+    "verify:activation": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-plugin-activation.ps1",
+    "roundtrip": "tsx scripts/roundtrip-check.ts"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
