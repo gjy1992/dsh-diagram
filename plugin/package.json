@@ -1,0 +1,35 @@
+{
+  "name": "@gjy_1992/dsh-diagram",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "dsh-diagram：用 YAML DSL 生成深色卡片式系统架构图，对话内 SVG 预览 + .drawio 导出",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-tool"
+      ]
+    }
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale"
+  ]
+}

@@ -452,3 +452,92 @@ M0 工程基线
 ```
 
 每个里程碑完成后单独提交一次，便于回溯与评审。
+
+---
+
+# dsh-diagram 工作计划（Phase 2 · dsh 插件集成）
+
+| 项 | 内容 |
+| :--- | :--- |
+| 依据文档 | [prd.md](./prd.md) §4.2 / §4.3 / §4.4 / §7 Phase 2 |
+| 前置 | Phase 1 引擎（`schema` / `layout` / `drawio` / `core`）已交付并验收（§5.3） |
+| 交付路线 | **用户裁决（2026-10-01）：先最小闭环 S1 验证插件接口，再接 SVG 卡片 S2** |
+| 状态 | S1 已落地并端到端验证（见 P2.4）；S2 待开工 |
+
+## P2.1 交付物形态：一个可安装 bundle
+
+安装单元是仓库内的 `plugin/` 目录（**刻意不是 pnpm workspace 成员**，避免与 root 包名冲突）：
+
+```text
+plugin/
+├── package.json          # name=@gjy_1992/dsh-diagram，声明 dsh.bundle.patch + dsh.client
+├── cordis.patch.yml      # insert 一行：id=dsh-diagram（set_plugin 的 target 是 include:dsh-diagram）
+├── icon.svg              # 插件管理页卡片图标
+├── locale/{zh,en}.json   # 展示标题与描述（不激活插件也能读到）
+├── src/host.ts           # 宿主半源码：defineTool + 自愈载荷 + save_drawio
+├── src/client.tsx        # 客户端半源码：keyed toolview
+├── index.js              # ← 打包产物（宿主半，ESM，提交进仓库）
+└── client.js             # ← 打包产物（客户端半，__ModuleLoader__ 信封）
+```
+
+`scripts/build-plugin.mjs` 用 **esbuild** 出两半，不新增构建依赖：按「环境变量 → 本仓库 → 本机 dsh checkout 的 pnpm 存储」候选顺序解析 esbuild。宿主半把 `@deepseek-ai/*` 保持 external（必须与运行时同一份实例），客户端半把 `react`/`react/jsx-runtime` 留给浏览器模块表、其余（含 `@dsh-diagram/*` 引擎）全部内联。
+
+## P2.2 工具契约（用户逐条确认后冻结）
+
+工具面**只有 1 个** `render_architecture`：校验是它的内部步骤，导出由卡片承担。
+
+| 项 | 取值 |
+| :--- | :--- |
+| 参数 | `title`(必填) / `yaml_spec`(必填) / `save_drawio`(可选布尔，缺省 false) |
+| 输出 | `{ groups, nodes, edges, width, height, file_name, saved_path? }`；`render` 只吐一行中文摘要 |
+| 失败载荷 | `Error: ValidationError: yaml_spec 中有 N 处问题…` + 逐行 `序号. path [CODE] message Did you mean '…'?`（上限 12 条） |
+| description | 见 `plugin/src/host.ts` 的 `DESCRIPTION`；**不含 `layout`**，含三段枚举（node/group/edge 的 variant/style） |
+
+### 契约决策
+
+| ID | 决策 | 理由 |
+| :--- | :--- | :--- |
+| **P2-D1** | 卡片**客户端自带引擎**，从调用参数 `yaml_spec` 现场解析 + 布局 + 渲染 | 零上下文开销、replay/fork 后可重现；备选（宿主算好塞进 result / 客户端回调宿主 RPC）分别要背几十 KB token 或多一层引用 |
+| **P2-D2** | 卡片挂在 keyed slot `tool.call.toolview`（key = wire 工具名），**不是右侧面板** | 官方口径：Client 自行从「原始参数 + 结果内容 + 失败状态」派生展示；keyed 命中即**接管整行**，故卡片自带行头并保留 `data-chat-anchor-key` / `data-chat-call-id` 契约 |
+| **P2-D3** | 宿主不吐 XML、不落盘（除非 `save_drawio`） | 成功只回一行摘要；XML 留在宿主，避免每次请求都背整份 draw.io 明文 |
+| **P2-D4** | `layout` 字段保留在 YAML schema，但**不进模型文档** | 用户裁决：`direction` / `inner_direction` / `max_columns` 留给手动 / UI 通道，模型不该碰几何 |
+| **P2-D5** | 落盘走 `ctx.fs`（受策略治理、计入工作区变更），路径 `<会话 cwd>/<file_name>` | 不绕过用户的文件规则；写入后补发 `fs/observed` 保持观察账本真实 |
+| **P2-D6** | 失败载荷用人类可读逐行，不用 JSON 块 | 模型读得更好，客户端卡片也能直接当错误行显示 |
+
+## P2.3 宿主侧实现要点
+
+* `execute` 里唯一失败通道是 `throw new Error(formatDiagnostics(...))` —— 模型看到 `Error: <诊断文本>`，据此改写 `yaml_spec` 重试，即 PRD §4.3 的自愈闭环。
+* `packages/core` 的 `renderArchitecture()` 新增 `summary` 字段（`{groups,nodes,edges,width,height,fileName}`），XML 仍留给 CLI 使用。
+* `defineTool` 的输出对象**必须显式写 `additionalProperties`**（DSH 硬约束，缺了注册时就炸）。
+
+## P2.4 S1 执行结果（2026-10-01）
+
+| 验收项 | 结果 | 证据 |
+| :--- | :--- | :--- |
+| `pnpm build`（tsc strict） | ✅ exit 0 | —— |
+| 两半打包 | ✅ `index.js` 445 KB（引擎+Ajv+js-yaml 内联）/ `client.js` 6.7 KB | `pnpm build:plugin` |
+| bundle 安装 | ✅ `application: applied`，profile 出现 `link:` 依赖 | `plugin_manager install_bundle` |
+| 宿主 Tool 注册 | ✅ `render_architecture` 进入本 agent 可见工具集 | `cordis_inspect_query` Host `Tool.listTools` |
+| 客户端 slot 注册 | ✅ occupant `{ key: "render_architecture", active: true }` | `cordis_inspect_query` Client `Slots.listSubTree` |
+| 真实调用（成功路径） | ✅ “已生成架构图：4 个分组 / 9 个节点 / 8 条连线，画布 1252×902…” | 狗粮图：画插件自身架构 |
+| 真实调用（自愈路径） | ✅ `Error: ValidationError: yaml_spec 中有 1 处问题，请修正后重新调用本工具。` | 反例 `variant: core` |
+| `save_drawio` 落盘 | ⚠️ **被沙箱拒绝**（见 C1），修复已写入源码与产物，**待一次 dsh 重启后复验** | —— |
+
+### 实测踩坑（都不是猜测）
+
+* **C1 · `fs.writeText` 省略 `sandboxPolicy` ≠ 沿用当前会话策略**。`fs-sandbox/src/index.ts:123` 是 `const policy = sandboxPolicy ?? this.ctx.sandboxPolicy.resolve()` —— 不带 session 的 `resolve()` 用的是**部署默认**（`workspace-write` + 部署兜底根），于是会话工作区里的目标被判成"外面"，报 `cannot write "…": file access denied under workspace-write mode`。修法：每次执行都 `ctx.sandboxPolicy.resolve({ session })` 再显式传下去（与 `tool-fs` 一致）。
+* **C2 · 本 profile 的宿主侧热更新是关的**。`hmr` 行默认 `root: []`（只保留显式配置监听），且 `plugin_manager` 的 `set_plugin` 关→开循环**不会**让已缓存的 ESM 模块失效 —— 实测：改完诊断文案、重打包、重启插件后，工具调用仍返回旧文案。**结论：宿主半的任何改动都需要重启 dsh 才生效**（客户端半是否随页面刷新更新，S2 首轮实测）。
+
+## P2.5 遗留与 TODO
+
+| ID | 项 | 说明 |
+| :--- | :--- | :--- |
+| **T1** | 第二个工具 `drawio_to_yaml` | 契约已冻结（`{path}` → `{yaml_spec, warnings}`），**本轮不注册、不实现**。难点：mxGraph cell → DSL 只能恢复语义，用户手改的几何/新增图形/自定义样式无法还原，需先定「丢弃 vs 降级成 items 注释」策略 |
+| **T2** | schema 错误会短路拓扑检查 | `validateArchSpec` 在 Ajv 阶段失败即返回，不再跑外键/环检查，模型需多轮才能收敛（PRD §4.3 期望一次拿到全部问题）。方向：防御式归一化后合并报告 |
+| **T3** | 客户端半无类型检查 | 仓库未装 `@types/react`，`plugin/src/**` 只经 esbuild（语法）+ 运行验证。要补则加 plugin 局部 tsconfig |
+| **T4** | `save_drawio` 端到端复验 | 依赖一次 dsh 重启（C2） |
+| **T5** | S2 主体 | SVG 深色预览（pan/zoom + hover 高亮入出边）+「下载 .drawio」按钮 + 按 ui-primitives 复刻行头 |
+
+## P2.6 S2 预告（待用户确认后开工）
+
+客户端半 S2 需要解决：① 浏览器侧不能引入 Ajv（`new Function` 与 CSP/包体都不可取），故 `@dsh-diagram/schema` 需要一个**不含 validate.ts 的浏览器入口**（`parseYaml` + `normalize` + 类型）；② 行头按 `ui-primitives` 的 markup/CSS 自绘，只用 `--dsw-alias-*` token；③ 下载用 Blob（前端同一份引擎生成明文 XML）。

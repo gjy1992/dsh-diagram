@@ -14,7 +14,8 @@
     "validate": "tsx packages/core/src/cli.ts validate",
     "build:examples": "tsx packages/core/src/cli.ts build-all examples -o out",
     "verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1",
-    "audit:routing": "tsx scripts/audit-routing.ts"
+    "audit:routing": "tsx scripts/audit-routing.ts",
+    "build:plugin": "node scripts/build-plugin.mjs"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

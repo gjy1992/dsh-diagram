@@ -39,6 +39,13 @@ function toPath(instancePath: string, missingProperty?: string): string {
   return path.length > 0 ? path : '(root)';
 }
 
+/**
+ * Ajv 错误 → 诊断对象。
+ *
+ * 自愈闭环的质量完全取决于这里的文案：模型只看得到 `path [code] message`，
+ * 所以每条必须**自足可行动** —— 枚举列出全部合法值、类型错误点明期望类型，
+ * 而不是把 Ajv 的通用措辞（"must be equal to one of the allowed values"）原样透传。
+ */
 function toDiagnostic(error: ErrorObject): Diagnostic {
   const missing =
     error.keyword === 'required'
@@ -49,14 +56,25 @@ function toDiagnostic(error: ErrorObject): Diagnostic {
     ? (error.params as { additionalProperty?: string }).additionalProperty
     : undefined;
 
+  let message: string;
+  if (missing !== undefined) {
+    message = `missing required property '${missing}'`;
+  } else if (isExtraProperty) {
+    message = `unknown property '${extraProperty}' is not allowed`;
+  } else if (error.keyword === 'enum') {
+    const allowed = (error.params as { allowedValues?: unknown[] }).allowedValues ?? [];
+    message = `must be one of: ${allowed.map((value) => JSON.stringify(value)).join(' | ')}`;
+  } else if (error.keyword === 'type') {
+    const expected = (error.params as { type?: string }).type;
+    message = expected === undefined ? 'invalid value' : `must be of type ${expected}`;
+  } else {
+    message = error.message ?? 'invalid value';
+  }
+
   return {
     code: `SCHEMA_${error.keyword.toUpperCase()}`,
     path: toPath(error.instancePath, missing ?? extraProperty),
-    message: missing
-      ? `missing required property '${missing}'`
-      : isExtraProperty
-        ? `unknown property '${extraProperty}' is not allowed`
-        : (error.message ?? 'invalid value'),
+    message,
   };
 }
 

@@ -1,0 +1,4 @@
+{
+  "title": "架构图 (dsh-diagram)",
+  "description": "用 YAML DSL 生成深色卡片式系统架构图：对话内可缩放 SVG 预览、悬浮高亮连线，一键导出/落盘 draw.io 文件。"
+}

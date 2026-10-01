@@ -1,0 +1,7 @@
+# dsh-diagram bundle patch：把插件行插进 profile。
+# - id 决定 Cordis Loader 中的 entry id（用于 cordis_inspect_query / 配置页定位）。
+# - name 必须等于本包的 package.json name。
+- insert:
+    - id: dsh-diagram
+      name: '@gjy_1992/dsh-diagram'
+      config: {}

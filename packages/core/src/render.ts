@@ -2,8 +2,19 @@ import { buildDrawio } from '@dsh-diagram/drawio';
 import { layoutSpec } from '@dsh-diagram/layout';
 import { validateArchSpec, type Diagnostic } from '@dsh-diagram/schema';
 
+/** 供宿主 Tool 输出与前端卡片使用的统计摘要（不含 XML，避免进入模型上下文）。 */
+export interface RenderSummary {
+  groups: number;
+  nodes: number;
+  edges: number;
+  /** 内容边界盒宽（已含走线通道，不含画布外边距） */
+  width: number;
+  height: number;
+  fileName: string;
+}
+
 export type RenderResult =
-  | { ok: true; data: { drawioXml: string; drawioFileName: string } }
+  | { ok: true; data: { drawioXml: string; drawioFileName: string; summary: RenderSummary } }
   | { ok: false; diagnostics: Diagnostic[] };
 
 export interface RenderInput {
@@ -27,6 +38,17 @@ export async function renderArchitecture(input: RenderInput): Promise<RenderResu
 
   return {
     ok: true,
-    data: { drawioXml: artifact.xml, drawioFileName: artifact.fileName },
+    data: {
+      drawioXml: artifact.xml,
+      drawioFileName: artifact.fileName,
+      summary: {
+        groups: validated.spec.groups.length,
+        nodes: validated.spec.nodes.length,
+        edges: validated.spec.edges.length,
+        width: Math.round(layout.bounds.width),
+        height: Math.round(layout.bounds.height),
+        fileName: artifact.fileName,
+      },
+    },
   };
 }

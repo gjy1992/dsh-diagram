@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="dsh-diagram">
+  <rect x="2" y="2" width="60" height="60" rx="13" fill="#0f172a"/>
+  <g stroke="#38bdf8" stroke-width="2.5" fill="none" stroke-linecap="round">
+    <path d="M30 26v-8h4"/>
+    <path d="M30 26v8"/>
+    <path d="M30 34v8h4"/>
+    <path d="M30 26h-4"/>
+    <path d="M30 34h-4"/>
+  </g>
+  <g fill="#1e293b" stroke="#334155" stroke-width="2">
+    <rect x="14" y="16" width="12" height="10" rx="2.5"/>
+    <rect x="38" y="16" width="12" height="10" rx="2.5"/>
+    <rect x="14" y="38" width="12" height="10" rx="2.5"/>
+    <rect x="38" y="38" width="12" height="10" rx="2.5"/>
+  </g>
+  <g fill="#38bdf8">
+    <circle cx="30" cy="26" r="2.5"/>
+    <circle cx="30" cy="34" r="2.5"/>
+  </g>
+</svg>

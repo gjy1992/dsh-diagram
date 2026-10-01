@@ -1,0 +1,4 @@
+{
+  "title": "Architecture Diagram (dsh-diagram)",
+  "description": "Dark card-style architecture diagrams from a YAML DSL: zoomable in-conversation SVG preview with hover-highlighted edges, and one-click draw.io export."
+}
