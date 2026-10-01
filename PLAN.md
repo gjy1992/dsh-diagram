@@ -528,26 +528,33 @@ plugin/
 * **C1 · `fs.writeText` 省略 `sandboxPolicy` ≠ 沿用当前会话策略**。`fs-sandbox/src/index.ts:123` 是 `const policy = sandboxPolicy ?? this.ctx.sandboxPolicy.resolve()` —— 不带 session 的 `resolve()` 用的是**部署默认**（`workspace-write` + 部署兜底根），于是会话工作区里的目标被判成"外面"，报 `cannot write "…": file access denied under workspace-write mode`。修法：每次执行都 `ctx.sandboxPolicy.resolve({ session })` 再显式传下去（与 `tool-fs` 一致）。
 * **C2 · 本 profile 的宿主侧热更新是关的**。`hmr` 行默认 `root: []`（只保留显式配置监听），且 `plugin_manager` 的 `set_plugin` 关→开循环**不会**让已缓存的 ESM 模块失效 —— 实测：改完诊断文案、重打包、重启插件后，工具调用仍返回旧文案。**结论：宿主半的任何改动都需要重启 dsh 才生效**；但**客户端半不需要** —— 客户端产物的 URL 带内容 sha1 的 `rev` 戳，重打包后刷新页面就能取到新字节（S2 实测：刷新前后「带 SVG 的卡片数」3 → 6）。
 
-## P2.5 遗留与 TODO（全部登记，2026-10-01 第二轮更新）
+* **C3 · `setPointerCapture` 会吞掉点击**。容器在 `pointerdown` 里立刻捕获指针后，Chrome 会把后续的 `click` 一并重定向到**捕获元素**（容器），于是节点 `<g>` 的 `onClick` 永远收不到 —— 现象极具误导性：**悬停高亮完全正常，点击却打不开详情面板**（T10 实测抓出）。修法：先看距离，超过 3px 才算「拖动平移」并此刻才捕获；否则视为点击，让它原样落到节点上。
 
-### 已完成（第三轮，2026-10-01）
+## P2.5 遗留与 TODO（全部登记，2026-10-01 第三轮更新）
+
+### 已完成
 
 | ID | 项 | 结果 |
 | :--- | :--- | :--- |
-| **T1** | 双向文件级工具对 `yaml_to_drawio` + `drawio_to_yaml` | ✅ 见 §P2.7（子代理交付；主代理独立复验：改动范围合规、tsc 绿、5 个样例往返全绿） |
-| **T2** | schema 错误与引用/层级错误**合并**报告 | ✅ 见 §P2.8 |
+| **T1** | 双向文件级工具对 `yaml_to_drawio` + `drawio_to_yaml` | ✅ 见 §P2.7。端到端实测：读文件→渲染→按 `meta.title` 落到 **YAML 同目录**；卡片从 `tool/result.meta` 出图；.drawio 反解回语义一致的 YAML |
+| **T2** | schema 错误与引用/层级错误**合并**报告 | ✅ 见 §P2.8。端到端实测：坏文件一次报全 4 处（枚举 + node.group + edge.from + group.parent），首行主语是**文件路径** |
+| **T3** | 插件两半类型检查 | ✅ `pnpm typecheck:plugin`（生成临时 tsconfig 映射本机 dsh 已构建的 .d.ts）。**立刻抓到一个真 bug**：`Diagnostic` 曾从 `@dsh-diagram/core` 导入而 core 未导出它，因是 `import type` 被 esbuild 擦掉、运行时永不暴露 |
+| **T6** | 回合末尾的卡片再现（turnTail 条目） | ✅ 实测（重启后）：上一回合末尾出现「本回合架构图 / T6 折叠旁路 / 下载 .drawio」**并带 SVG**，与工具行是否折叠无关 |
 | **T7** | 卡片暴露 `saved_path` | ✅ 卡片行下新增「已落盘到 <绝对路径>」 |
+| **T8** | 行头对齐宿主 `ToolRow` | ✅ 实测：`role=button` / `tabIndex=0` / `aria-expanded` 切换 / 标题字重 400 / 悬停把「查看轨迹」从 opacity 0 提到 1 |
+| **T10** | 节点点击详情面板 | ✅ 实测：点击钉住节点（`aria-pressed`）+ 3 边高亮 / 4 边淡出；面板含语义徽标、items、入/出边；点对端可**跳转**；Esc 关闭。途中修掉 C3 那个真 bug |
+
+### 挂起（有结论、等条件）
+
+| ID | 项 | 结论 |
+| :--- | :--- | :--- |
+| **T9** | PRD Phase 3 · 行内 ` ```arch-yaml ` 预览 | **挂起（用户裁决）**。DSH 0.1.7-rc.2 **没有给自定义围栏语言留接缝**：markdown 渲染器在 ui-primitives，纯 props 驱动、无注册表（`MarkdownRenderContext` 只吃 `streaming` / `labels` / `fileMentions` / `pathImages`，`renderCode` 只对 `lang === 'math'` 特判），槽位目录里也没有任何 markdown / 代码块槽。三条路径：(a) 接管 assistant 的 chat node ＝ `shadows-shipped-ui`，要自己重写整段 markdown/图片/链接委托；(b) DOM 拦截已渲染的 `language-arch-yaml` 块 ＝ practices 明禁「插件自己扫/写 DOM」；(c) 把围栏当**第二条数据通道**、预览落回合末尾（与 T6 共用渲染面）＝ 放弃「行内」二字。用户选：先挂起，等宿主开接缝或真需要行内时再议 |
 
 ### 待做（按建议顺序）
 
 | ID | 项 | 说明 | 优先级 |
 | :--- | :--- | :--- | :--- |
-| **T6** | 回合末尾的卡片再现（turnTail 条目） | 工具行被 step 折叠行收起时，回合末尾仍能看到本轮架构图 | 高（用户提出） |
-| **T3** | 插件两半无类型检查 | 未装 `@types/react`；`plugin/src/**` 只经 esbuild 语法 + 运行验证。补法：plugin 局部 tsconfig | 中 |
-| **T8** | 行头打磨 | 现在按 token 自绘，不是 ui-primitives ToolRow 的逐像素复刻（缺 hover 态、折叠动画、Inspect 入口） | 低（观感） |
-| **T5** | 卡片像素级视觉回归 | **可做了**（见 P2.6 更正）：先把该 step 的「已调用工具」折叠行点开再截图 | 低 |
-| **T9** | PRD Phase 3 · 行内 ` ```arch-yaml ` 预览 | PRD §7 Phase 3 第 1 条，双通道容错 | 观望 |
-| **T10** | PRD Phase 3 · 节点点击详情面板 | 悬停高亮已做；点击开面板未做 | 观望 |
+| **T5** | 卡片像素级视觉回归 | 现在**可做了**（C3 与 P2.6 更正已给出绕法：先卸掉宿主折叠行的隐藏再截图） | 低 |
 | **T11** | `layout` 的手动通道 | 已裁决 layout 不进模型文档、留给用户手改 YAML；「改完看效果」由 T1 的 `yaml_to_drawio` 承担 | 由 T1 覆盖 |
 | **T12** | 发布通路 | `dsh plugin add @gjy_1992/dsh-diagram` 需 npm 发布 + 版本流程（PRD §6.4） | **押后**（用户裁决） |
 
