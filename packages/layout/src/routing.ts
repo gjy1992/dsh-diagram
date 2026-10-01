@@ -164,7 +164,7 @@ function overlapsPlaced(segments: Segment[], context: RouteContext): boolean {
       if (other.axis !== segment.axis) {
         continue;
       }
-      if (Math.abs(other.coord - segment.coord) >= LANE_STEP) {
+      if (Math.abs(other.coord - segment.coord) >= LANE_CLEARANCE) {
         continue;
       }
       if (segment.hi < other.lo - EPS || segment.lo > other.hi + EPS) {
@@ -353,7 +353,9 @@ function buildCandidates(
       if (!bBelow) {
         return null;
       }
-      const midY = (aBottom + b.y) / 2 + offset;
+      // 无车道信息时的兜底：取两点之间中线做水平过渡。
+      // 中线同样要避让分组框横边框（否则会像 04 的 `gateway->order_api` 那样贴在 `平台层` 顶边 2px 处）。
+      const midY = context.clearY((aBottom + b.y) / 2 + offset);
       return [
         fromBottom,
         { x: fromBottom.x, y: midY },
@@ -578,9 +580,16 @@ export function routeEdges(
       (left, right) => left - right,
     );
 
+  /** 本框架下所有分组框的左/右竖边框 x 值 */
+  const borderXsOf = (frame: LayoutDirection): number[] =>
+    [...new Set([...groupsOf(frame).values()].flatMap((rect) => [rect.x, rect.x + rect.width]))].sort(
+      (left, right) => left - right,
+    );
+
   /**
-   * 把 y 钳到「离分组框横边框至少 LANE_CLEARANCE」的位置：取它所在的那段空隙往中间收。
-   * 不钳制时实测出现过多处连线压在虚线框上（02 8px、03 4px、04 2px）。
+   * 把轴向坐标钳到「离分组框同轴向边框至少 LANE_CLEARANCE」的位置：取它所在的那段空隙往中间收。
+   * 横轴（y）与竖轴（x）共用同一实现，见下方的 `clearXWith`。
+   * 不钳制时实测出现过多处连线压在虚线框上（02 8px、03 0px、04 2px）。
    */
   const clearYWith = (borderYs: number[], y: number): number => {
     let lower = Number.NEGATIVE_INFINITY;
@@ -596,10 +605,20 @@ export function routeEdges(
     const low = Number.isFinite(lower) ? lower + LANE_CLEARANCE : Number.NEGATIVE_INFINITY;
     const high = Number.isFinite(upper) ? upper - LANE_CLEARANCE : Number.POSITIVE_INFINITY;
     if (low > high) {
+      // 空隙窄到两侧都留不出 LANE_CLEARANCE 时，绝不能把边框值本身当结果 ——
+      // 那正是「连线压在分组框虚线上」（实测 03 的 `single_player->director` 正是
+      // approachY 取到 y=0、与 `编排层` 顶边框完全重合）。坐标恰好落在某条边框上
+      // （lower === upper）时，往里让开一个 LANE_CLEARANCE。
+      if (lower === upper) {
+        return y + LANE_CLEARANCE;
+      }
       return Number.isFinite(lower) && Number.isFinite(upper) ? (lower + upper) / 2 : y;
     }
     return Math.min(Math.max(y, low), high);
   };
+
+  /** 与 `clearYWith` 同构：把 x 钳到离分组框竖边框至少 LANE_CLEARANCE 的位置 */
+  const clearXWith = clearYWith;
 
   /** 分组 → 自身与全部祖先：这些框允许被穿过（端点就在里面），其余分组框算障碍 */
   const groupChain = new Map<string, Set<string>>();
@@ -765,7 +784,11 @@ export function routeEdges(
       }
     }
 
-    const corridors = corridorsOf.get(frame)!;
+    // 内部走廊来自「节点间隙中点」，当那段间隙恰好贴着分组框时，中点会压在虚线上
+    // （实测 02 曾贴到 4px）。先用 clearX 把走廊推离所有竖边框 ≥ LANE_CLEARANCE，
+    // 再交给 pickCorridors；外侧栏杆（±LANE_CLEARANCE）本身就是净距，不参与推移。
+    const borderXs = borderXsOf(frame);
+    const corridors = corridorsOf.get(frame)!.map((x) => clearXWith(borderXs, x));
     const srcCorridors = pickCorridors(
       corridors,
       a.x + a.width / 2,

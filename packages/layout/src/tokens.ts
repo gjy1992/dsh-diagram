@@ -35,10 +35,14 @@ export const MIN_NODE_HEIGHT = 48;
 
 // ── 布局单元（分组）───────────────────────────────────────────────
 
-/** 单元内边距：非标题方向的两侧 */
-export const UNIT_PADDING_X = 20;
+/**
+ * 单元内边距（= 分组框到最近的直属内容的净距，四侧统一 24px）。
+ * 这条净距同时是「连线可以在分组框内侧走」的空间来源：
+ * 外侧留 24px，走线取 12px 处，正好既不压虚线、也不碰节点。
+ */
+export const UNIT_PADDING_X = 24;
 /** 单元内边距：非标题方向的收尾侧 */
-export const UNIT_PADDING_BOTTOM = 20;
+export const UNIT_PADDING_BOTTOM = 24;
 /** 单元内边距：留给组标题的一侧（画法上恒定在物理上方） */
 export const UNIT_HEADER_HEIGHT = 24;
 
@@ -61,20 +65,27 @@ export const MAX_RIB_LENGTH = 4;
 
 // ── 走线 ─────────────────────────────────────────────────────────
 
-/** 同一通道内相邻车道的偏移步长 */
-export const LANE_STEP = 8;
+/**
+ * 走线净距规则（用户裁决，三者统一为「不压虚线」）：
+ * - 连线 ↔ 分组框边框、连线 ↔ 连线：至少 `LANE_CLEARANCE`（12px）；
+ * - 连线可以在分组框**内侧**走 —— 组内还有 `UNIT_PADDING_X`（24px）空间，
+ *   取 12px 处正好夹在虚线与节点之间。
+ * 因此外侧栏杆距内容边缘也取 `LANE_CLEARANCE`，不再额外外推。
+ */
+export const LANE_CLEARANCE = 12;
+
+/** 同一通道内相邻车道的偏移步长（= 连线 ↔ 连线的最小净距） */
+export const LANE_STEP = LANE_CLEARANCE;
 /** 层间走廊内最多分几条车道 */
 export const LANE_LIMIT = 12;
 /** 判定「相邻层正向边」的最大层间距；超过即走跨层绕行通道 */
 export const MAX_LANE_GAP = 200;
 /** 跨多层绕行时，外侧通道（栏杆）与内容边缘的距离 */
-export const OUTER_CHANNEL_GAP = 56;
+export const OUTER_CHANNEL_GAP = LANE_CLEARANCE;
 /** 反向边顶部栏杆预留高度（栏杆距内容顶部） */
-export const TOP_RAIL_HEIGHT = 56;
+export const TOP_RAIL_HEIGHT = LANE_CLEARANCE;
 /** 碰撞检测时给节点矩形留的安全边距 */
 export const COLLISION_PADDING = 4;
-/** 车道 / 走廊与分组框边框之间要保持的净距 */
-export const LANE_CLEARANCE = 12;
 
 /** 画布外边距（画布尺寸自适应时外扩） */
 export const CANVAS_MARGIN = 40;

@@ -11,12 +11,33 @@ interface Bounds2 {
   maxY: number;
 }
 
+/**
+ * 归一化平移：`absX/absY` 与连线的绝对坐标整体平移到非负；
+ * 但 mxGraph 里子元素用的是**相对父容器**的 `x/y`（`packages/drawio` 读取的是 `x/y` 而非 `absX/absY`），
+ * 父容器同样平移了 `dx/dy`，所以只有**没有父容器**（顶层分组 / 未分组节点）的 `x/y` 需要跟着平移，
+ * 有父容器的一律保持不变 —— 否则顶点与连线的坐标系会错开 `dx/dy`（实测 03 曾错开 64px，
+ * 表现为连线正好压在分组框的左/上虚框线上）。
+ */
 function shiftNode(node: LayoutNode, dx: number, dy: number): LayoutNode {
-  return { ...node, absX: node.absX + dx, absY: node.absY + dy };
+  const free = node.groupId === undefined;
+  return {
+    ...node,
+    x: free ? node.x + dx : node.x,
+    y: free ? node.y + dy : node.y,
+    absX: node.absX + dx,
+    absY: node.absY + dy,
+  };
 }
 
 function shiftGroup(group: LayoutGroup, dx: number, dy: number): LayoutGroup {
-  return { ...group, absX: group.absX + dx, absY: group.absY + dy };
+  const free = group.parentId === undefined;
+  return {
+    ...group,
+    x: free ? group.x + dx : group.x,
+    y: free ? group.y + dy : group.y,
+    absX: group.absX + dx,
+    absY: group.absY + dy,
+  };
 }
 
 function shiftEdge(edge: LayoutEdge, dx: number, dy: number): LayoutEdge {
