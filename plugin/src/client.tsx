@@ -49,8 +49,10 @@ const zh = {
   running: '渲染中…',
   done: '已渲染',
   failed: '渲染失败',
-  detail: '详情',
-  hide: '收起',
+  nodeDetail: '节点详情',
+  inEdges: '入边',
+  outEdges: '出边',
+  close: '关闭',
   inspect: '查看轨迹',
   saved: '已落盘到',
   reparseFailed: '卡片无法重算布局（宿主已通过校验，这是预览侧的问题）',
@@ -71,8 +73,10 @@ const en = {
   running: 'Rendering…',
   done: 'Rendered',
   failed: 'Render failed',
-  detail: 'Details',
-  hide: 'Hide',
+  nodeDetail: 'Node detail',
+  inEdges: 'Incoming',
+  outEdges: 'Outgoing',
+  close: 'Close',
   inspect: 'Inspect',
   saved: 'Saved to',
   reparseFailed: 'The card could not re-derive the layout (the host validated it; this is a preview-side problem)',
@@ -265,6 +269,10 @@ function DiagramCard(props: {
     zoomIn: t('zoomIn'),
     zoomOut: t('zoomOut'),
     download: t('download'),
+    detail: t('nodeDetail'),
+    inEdges: t('inEdges'),
+    outEdges: t('outEdges'),
+    close: t('close'),
   }), [t])
 
   const statusText = slice.state === 'preparing'
@@ -403,6 +411,10 @@ function previewLabels(t: (key: keyof Dict) => string) {
     zoomIn: t('zoomIn'),
     zoomOut: t('zoomOut'),
     failed: t('failed'),
+    detail: t('nodeDetail'),
+    inEdges: t('inEdges'),
+    outEdges: t('outEdges'),
+    close: t('close'),
   }
 }
 

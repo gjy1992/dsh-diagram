@@ -24,6 +24,10 @@ export interface TurnPreviewLabels {
   zoomIn: string
   zoomOut: string
   failed: string
+  detail: string
+  inEdges: string
+  outEdges: string
+  close: string
 }
 
 const styles = {

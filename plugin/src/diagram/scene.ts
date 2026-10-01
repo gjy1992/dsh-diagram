@@ -2,7 +2,7 @@
  * 纯场景构建：`LayoutResult` → 与框架无关的 SVG 图元（矩形 / 折线 / 文本）。
  *
  * 为什么单独一层：把「几何 + 配色」与「React 渲染 + 交互」分开后，
- * 场景可以脱离浏览器断言（见 scripts/audit-scene.ts），而 SVG 组件只负责画。
+ * 场景可以脱离浏览器断言（见 `scripts/audit-scene.ts`），而 SVG 组件只负责画。
  *
  * 配色口径：节点 / 分组复用 `@dsh-diagram/drawio` 的 `NODE_THEME` / `GROUP_THEME`，
  * 保证「对话内预览」与「导出的 .drawio」是同一套语义配色；画布底色与连线色
@@ -10,6 +10,9 @@
  *
  * 文本排版口径：与 `@dsh-diagram/layout` 的尺寸预估器用同一组 token 与同一个
  * 宽度估算函数，因此这里折出来的行数与布局算出的节点高度必然吻合（不会溢出卡片）。
+ *
+ * 节点还带上**语义字段与邻接关系**（T10 的详情面板要用）：几何渲染用不到它们，
+ * 但把面板需要的数据一起算在场景里，组件就不必再回头去读 `LayoutResult`。
  */
 import { GROUP_THEME, NODE_THEME } from '@dsh-diagram/drawio'
 import {
@@ -25,7 +28,7 @@ import {
   estimateTextWidth,
 } from '@dsh-diagram/layout'
 import type { LayoutEdge, LayoutGroup, LayoutNode, LayoutResult } from '@dsh-diagram/layout'
-import type { NormalizedSpec } from '@dsh-diagram/schema/browser'
+import type { NodeVariant, NormalizedSpec } from '@dsh-diagram/schema/browser'
 
 /** 预览侧美术配色（不属于 draw.io 单元格样式）。 */
 export const SVG_PALETTE = {
@@ -78,12 +81,29 @@ export interface SceneGroup {
   titleText: SceneText
 }
 
+/** 一条与某节点相连的边（详情面板展示方向、对端与标签）。 */
+export interface SceneNodeLink {
+  readonly edgeId: string
+  readonly direction: 'in' | 'out'
+  /** 对端节点 id */
+  readonly other: string
+  readonly label?: string
+}
+
 export interface SceneNode {
   id: string
   title: string
+  /** 一行说明（详情面板用；几何渲染用不到） */
+  desc?: string
+  /** RPC / 接口清单（详情面板用） */
+  items: readonly string[]
+  /** 语义配色档位（详情面板作为徽标显示） */
+  variant: NodeVariant
   rect: SceneRect
   texts: SceneText[]
   separator?: SceneLine
+  /** 入 / 出边，顺序沿用布局给出的边顺序 */
+  links: readonly SceneNodeLink[]
 }
 
 export interface SceneEdge {
@@ -170,14 +190,37 @@ function baselineOf(lineTop: number, lineHeight: number): number {
   return lineTop + lineHeight * 0.72
 }
 
+/** 往邻接表里追加一条有向关系（无 label 时不写 `label` 键，保持 JSON 干净）。 */
+function pushLink(
+  table: Map<string, SceneNodeLink[]>,
+  nodeId: string,
+  link: SceneNodeLink,
+): void {
+  const list = table.get(nodeId)
+  if (list === undefined) {
+    table.set(nodeId, [link])
+  } else {
+    list.push(link)
+  }
+}
+
 /**
  * 构建整张场景。
  * @param layout - 布局结果（`absX/absY` 为画布绝对坐标）。
- * @param spec - 规范形态（用于校验引用完整性；本函数只读它的 id 集合）。
+ * @param spec - 规范形态（本函数只用它的 id 集合做引用完整性过滤）。
  * @returns 可直接交给 SVG/序列化层的图元集合。
  */
 export function buildScene(layout: LayoutResult, spec: NormalizedSpec): DiagramScene {
   const knownNodes = new Set(spec.nodes.map((node) => node.id))
+
+  // 邻接表：详情面板按节点列出「谁指向我 / 我指向谁」。
+  const linksByNode = new Map<string, SceneNodeLink[]>()
+  for (const edge of layout.edges) {
+    if (!knownNodes.has(edge.from) || !knownNodes.has(edge.to)) continue
+    const common = edge.label === undefined ? {} : { label: edge.label }
+    pushLink(linksByNode, edge.from, { edgeId: edge.id, direction: 'out', other: edge.to, ...common })
+    pushLink(linksByNode, edge.to, { edgeId: edge.id, direction: 'in', other: edge.from, ...common })
+  }
 
   const groups: SceneGroup[] = layout.groups.map((group: LayoutGroup) => {
     const theme = GROUP_THEME[group.variant]
@@ -225,7 +268,7 @@ export function buildScene(layout: LayoutResult, spec: NormalizedSpec): DiagramS
       cursor += TITLE_LINE_HEIGHT
     }
 
-    if (node.desc !== undefined) {
+    if (node.desc !== undefined && node.desc !== '') {
       for (const line of wrapText(node.desc, DESC_FONT_SIZE, NODE_TEXT_MAX_WIDTH)) {
         texts.push({
           x: centerX,
@@ -264,6 +307,9 @@ export function buildScene(layout: LayoutResult, spec: NormalizedSpec): DiagramS
     return {
       id: node.id,
       title: node.title,
+      desc: node.desc,
+      items: node.items,
+      variant: node.variant,
       rect: {
         x: node.absX,
         y: node.absY,
@@ -275,6 +321,7 @@ export function buildScene(layout: LayoutResult, spec: NormalizedSpec): DiagramS
       },
       texts,
       separator,
+      links: linksByNode.get(node.id) ?? [],
     }
   })
 

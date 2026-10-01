@@ -4922,8 +4922,23 @@ function midpointOf(points) {
 function baselineOf(lineTop, lineHeight) {
   return lineTop + lineHeight * 0.72;
 }
+function pushLink(table, nodeId, link) {
+  const list = table.get(nodeId);
+  if (list === void 0) {
+    table.set(nodeId, [link]);
+  } else {
+    list.push(link);
+  }
+}
 function buildScene(layout, spec) {
   const knownNodes = new Set(spec.nodes.map((node) => node.id));
+  const linksByNode = /* @__PURE__ */ new Map();
+  for (const edge of layout.edges) {
+    if (!knownNodes.has(edge.from) || !knownNodes.has(edge.to)) continue;
+    const common2 = edge.label === void 0 ? {} : { label: edge.label };
+    pushLink(linksByNode, edge.from, { edgeId: edge.id, direction: "out", other: edge.to, ...common2 });
+    pushLink(linksByNode, edge.to, { edgeId: edge.id, direction: "in", other: edge.from, ...common2 });
+  }
   const groups = layout.groups.map((group) => {
     const theme = GROUP_THEME[group.variant];
     return {
@@ -4967,7 +4982,7 @@ function buildScene(layout, spec) {
       });
       cursor += TITLE_LINE_HEIGHT;
     }
-    if (node.desc !== void 0) {
+    if (node.desc !== void 0 && node.desc !== "") {
       for (const line of wrapText(node.desc, DESC_FONT_SIZE, NODE_TEXT_MAX_WIDTH)) {
         texts.push({
           x: centerX,
@@ -5004,6 +5019,9 @@ function buildScene(layout, spec) {
     return {
       id: node.id,
       title: node.title,
+      desc: node.desc,
+      items: node.items,
+      variant: node.variant,
       rect: {
         x: node.absX,
         y: node.absY,
@@ -5014,7 +5032,8 @@ function buildScene(layout, spec) {
         rx: 8
       },
       texts,
-      separator
+      separator,
+      links: linksByNode.get(node.id) ?? []
     };
   });
   const edges = layout.edges.filter((edge) => knownNodes.has(edge.from) && knownNodes.has(edge.to) && edge.points.length > 1).map((edge) => {
@@ -5052,7 +5071,31 @@ var MAX_ZOOM = 4;
 var MIN_VIEWPORT_HEIGHT = 160;
 var MAX_VIEWPORT_HEIGHT = 440;
 var PREVIEW_VIEWPORT_HEIGHT = 240;
+var DRAG_THRESHOLD = 3;
 var FONT_STACK = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+var PANEL_CSS = `
+.dsh-diagram-panel { display: flex; flex-direction: column; gap: 6px; margin-top: 6px;
+  padding: 8px 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2); font-size: var(--dsh-content-font-size-secondary, 13px); }
+.dsh-diagram-panelHead { display: flex; align-items: center; gap: 6px; }
+.dsh-diagram-panelTitle { font-weight: 500; color: var(--dsw-alias-label-primary); }
+.dsh-diagram-panelVariant { padding: 0 6px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 999px;
+  font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-secondary); }
+.dsh-diagram-panelClose { margin-left: auto; border: 0; background: transparent; border-radius: 6px;
+  color: var(--dsw-alias-label-secondary); cursor: pointer; font-size: 12px; line-height: 16px; padding: 2px 6px; }
+.dsh-diagram-panelClose:hover { background: var(--dsw-alias-interactive-bg-hover-solid); color: var(--dsw-alias-label-primary); }
+.dsh-diagram-panelClose:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.dsh-diagram-panelDesc { color: var(--dsw-alias-label-secondary); }
+.dsh-diagram-panelItems { margin: 0; padding-left: 16px; color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code, ui-monospace, Menlo, Consolas, monospace); font-size: 11px; }
+.dsh-diagram-panelLinks { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.dsh-diagram-panelLinksTitle { color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+.dsh-diagram-panelLink { border: 0.5px solid var(--dsw-alias-border-l1); border-radius: 999px;
+  background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-secondary);
+  font-size: 11px; line-height: 16px; padding: 1px 8px; cursor: pointer; }
+.dsh-diagram-panelLink:hover { border-color: var(--dsw-alias-border-l3); color: var(--dsw-alias-label-primary); }
+.dsh-diagram-panelLink:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+`;
 var styles = {
   shell: {
     position: "relative",
@@ -5103,11 +5146,45 @@ var styles = {
 function clampZoom(k) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, k));
 }
+function NodeDetailPanel({ node, nodesById, labels, onSelect, onClose }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh-diagram-panel", role: "region", "aria-label": labels.detail, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh-diagram-panelHead", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh-diagram-panelTitle", children: node.title }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh-diagram-panelVariant", children: node.variant }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "dsh-diagram-panelClose", onClick: onClose, "aria-label": labels.close, children: "\u2715" })
+    ] }),
+    node.desc !== void 0 && node.desc !== "" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "dsh-diagram-panelDesc", children: node.desc }),
+    node.items.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { className: "dsh-diagram-panelItems", children: node.items.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: item }, item)) }),
+    ["in", "out"].map((direction) => {
+      const links = node.links.filter((link) => link.direction === direction);
+      if (links.length === 0) return null;
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh-diagram-panelLinks", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh-diagram-panelLinksTitle", children: direction === "in" ? labels.inEdges : labels.outEdges }),
+        links.map((link) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          "button",
+          {
+            type: "button",
+            className: "dsh-diagram-panelLink",
+            onClick: () => onSelect(link.other),
+            children: [
+              direction === "in" ? "\u2190" : "\u2192",
+              " ",
+              nodesById.get(link.other)?.title ?? link.other,
+              link.label === void 0 ? "" : ` \xB7 ${link.label}`
+            ]
+          },
+          link.edgeId
+        ))
+      ] }, direction);
+    })
+  ] });
+}
 function DiagramCanvas({ scene, fileName, onDownload, labels, idPrefix, variant = "card" }) {
   const hostRef = (0, import_react.useRef)(null);
   const [hostWidth, setHostWidth] = (0, import_react.useState)(0);
   const [view, setView] = (0, import_react.useState)({ k: 1, x: 0, y: 0 });
   const [hovered, setHovered] = (0, import_react.useState)(null);
+  const [selected, setSelected] = (0, import_react.useState)(null);
   const userAdjusted = (0, import_react.useRef)(false);
   const dragging = (0, import_react.useRef)(null);
   const contentW = Math.max(1, scene.viewBox.width);
@@ -5135,11 +5212,20 @@ function DiagramCanvas({ scene, fileName, onDownload, labels, idPrefix, variant 
   }, []);
   (0, import_react.useEffect)(() => {
     userAdjusted.current = false;
+    setSelected(null);
   }, [scene]);
   (0, import_react.useEffect)(() => {
     if (hostWidth <= 0 || userAdjusted.current) return;
     setView(fitWidth());
   }, [hostWidth, scene, viewportHeight]);
+  (0, import_react.useEffect)(() => {
+    if (selected === null) return;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setSelected(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selected]);
   function fitWidth() {
     const k = hostWidth > 0 ? Math.min(1, hostWidth / contentW) : 1;
     return { k, x: (hostWidth - contentW * k) / 2 - k * vx, y: -k * vy };
@@ -5176,20 +5262,25 @@ function DiagramCanvas({ scene, fileName, onDownload, labels, idPrefix, variant 
   }, []);
   function onPointerDown(event) {
     if (event.button !== 0) return;
-    const target = event.currentTarget;
-    target.setPointerCapture(event.pointerId);
     dragging.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
       originX: view.x,
-      originY: view.y
+      originY: view.y,
+      moved: false
     };
   }
   function onPointerMove(event) {
     const drag = dragging.current;
     if (drag === null || drag.pointerId !== event.pointerId) return;
-    userAdjusted.current = true;
+    if (!drag.moved) {
+      const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+      if (distance < DRAG_THRESHOLD) return;
+      drag.moved = true;
+      userAdjusted.current = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
     setView((current) => ({
       ...current,
       x: drag.originX + (event.clientX - drag.startX),
@@ -5209,186 +5300,221 @@ function DiagramCanvas({ scene, fileName, onDownload, labels, idPrefix, variant 
     userAdjusted.current = true;
     setView(fitAll());
   }
-  const hoverActive = hovered !== null;
+  const focusId = hovered ?? selected;
+  const focusActive = focusId !== null;
   const arrowEnd = `${idPrefix}-arrow-end`;
   const arrowStart = `${idPrefix}-arrow-start`;
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { ref: hostRef, style: styles.shell, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-      "div",
-      {
-        style: { ...styles.canvas, height: `${viewportHeight}px`, cursor: dragging.current === null ? "grab" : "grabbing" },
-        role: "img",
-        "aria-label": scene.groups.map((group) => group.title).join(" / "),
-        onPointerDown,
-        onPointerMove,
-        onPointerUp,
-        onPointerCancel: onPointerUp,
-        onDoubleClick,
-        children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-          "svg",
-          {
-            width: hostWidth > 0 ? hostWidth : "100%",
-            height: viewportHeight,
-            viewBox: `0 0 ${hostWidth > 0 ? hostWidth : 800} ${viewportHeight}`,
-            style: { display: "block", userSelect: "none" },
-            children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("defs", { children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("marker", { id: arrowEnd, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: SVG_PALETTE.edge }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("marker", { id: arrowStart, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: SVG_PALETTE.edge }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("marker", { id: `${arrowEnd}-active`, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: SVG_PALETTE.edgeActive }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("marker", { id: `${arrowStart}-active`, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: SVG_PALETTE.edgeActive }) })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: -4e3, y: -4e3, width: 8e3, height: 8e3, fill: scene.background }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("g", { transform: `translate(${view.x} ${view.y}) scale(${view.k})`, fontFamily: FONT_STACK, children: [
-                scene.groups.map((group) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("g", { children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                    "rect",
-                    {
-                      x: group.rect.x,
-                      y: group.rect.y,
-                      width: group.rect.width,
-                      height: group.rect.height,
-                      rx: group.rect.rx,
-                      fill: group.rect.fill,
-                      stroke: group.rect.stroke,
-                      strokeWidth: 1,
-                      strokeDasharray: group.rect.dash
-                    }
-                  ),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                    "text",
-                    {
-                      x: group.titleText.x,
-                      y: group.titleText.y,
-                      fontSize: group.titleText.size,
-                      fill: group.titleText.fill,
-                      textAnchor: group.titleText.anchor,
-                      children: group.titleText.text
-                    }
-                  )
-                ] }, group.id)),
-                scene.edges.map((edge) => {
-                  const active = hoverActive && (edge.from === hovered || edge.to === hovered);
-                  const dimmed = hoverActive && !active;
-                  const stroke = active ? SVG_PALETTE.edgeActive : SVG_PALETTE.edge;
-                  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("g", { opacity: dimmed ? 0.22 : 1, children: [
+  const selectedNode = selected === null ? void 0 : scene.nodes.find((node) => node.id === selected);
+  const nodesById = new Map(scene.nodes.map((node) => [node.id, node]));
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { ref: hostRef, style: styles.shell, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "div",
+        {
+          style: { ...styles.canvas, height: `${viewportHeight}px`, cursor: dragging.current === null ? "grab" : "grabbing" },
+          role: "img",
+          "aria-label": scene.groups.map((group) => group.title).join(" / "),
+          onPointerDown,
+          onPointerMove,
+          onPointerUp,
+          onPointerCancel: onPointerUp,
+          onDoubleClick,
+          children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "svg",
+            {
+              width: hostWidth > 0 ? hostWidth : "100%",
+              height: viewportHeight,
+              viewBox: `0 0 ${hostWidth > 0 ? hostWidth : 800} ${viewportHeight}`,
+              style: { display: "block", userSelect: "none" },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("defs", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("marker", { id: arrowEnd, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: SVG_PALETTE.edge }) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("marker", { id: arrowStart, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: SVG_PALETTE.edge }) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("marker", { id: `${arrowEnd}-active`, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: SVG_PALETTE.edgeActive }) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("marker", { id: `${arrowStart}-active`, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: SVG_PALETTE.edgeActive }) })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: -4e3, y: -4e3, width: 8e3, height: 8e3, fill: scene.background }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("g", { transform: `translate(${view.x} ${view.y}) scale(${view.k})`, fontFamily: FONT_STACK, children: [
+                  scene.groups.map((group) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("g", { children: [
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                      "path",
+                      "rect",
                       {
-                        d: edge.path,
-                        fill: "none",
-                        stroke,
-                        strokeWidth: active ? 2.4 : 1.4,
-                        strokeDasharray: edge.dash,
-                        markerEnd: `url(#${active ? `${arrowEnd}-active` : arrowEnd})`,
-                        markerStart: edge.both ? `url(#${active ? `${arrowStart}-active` : arrowStart})` : void 0
+                        x: group.rect.x,
+                        y: group.rect.y,
+                        width: group.rect.width,
+                        height: group.rect.height,
+                        rx: group.rect.rx,
+                        fill: group.rect.fill,
+                        stroke: group.rect.stroke,
+                        strokeWidth: 1,
+                        strokeDasharray: group.rect.dash
                       }
                     ),
-                    edge.label !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      "text",
+                      {
+                        x: group.titleText.x,
+                        y: group.titleText.y,
+                        fontSize: group.titleText.size,
+                        fill: group.titleText.fill,
+                        textAnchor: group.titleText.anchor,
+                        children: group.titleText.text
+                      }
+                    )
+                  ] }, group.id)),
+                  scene.edges.map((edge) => {
+                    const active = focusActive && (edge.from === focusId || edge.to === focusId);
+                    const dimmed = focusActive && !active;
+                    const stroke = active ? SVG_PALETTE.edgeActive : SVG_PALETTE.edge;
+                    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("g", { opacity: dimmed ? 0.22 : 1, children: [
                       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                        "rect",
+                        "path",
                         {
-                          x: edge.label.x - edge.label.width / 2,
-                          y: edge.label.y - edge.label.height / 2 - 3,
-                          width: edge.label.width,
-                          height: edge.label.height,
-                          rx: 4,
-                          fill: SVG_PALETTE.edgeLabelBg
+                          d: edge.path,
+                          fill: "none",
+                          stroke,
+                          strokeWidth: active ? 2.4 : 1.4,
+                          strokeDasharray: edge.dash,
+                          markerEnd: `url(#${active ? `${arrowEnd}-active` : arrowEnd})`,
+                          markerStart: edge.both ? `url(#${active ? `${arrowStart}-active` : arrowStart})` : void 0
                         }
                       ),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                        "text",
-                        {
-                          x: edge.label.x,
-                          y: edge.label.y + 1,
-                          fontSize: 11,
-                          fill: active ? SVG_PALETTE.edgeActive : SVG_PALETTE.edgeLabel,
-                          textAnchor: "middle",
-                          children: edge.label.text
-                        }
-                      )
-                    ] })
-                  ] }, edge.id);
-                }),
-                scene.nodes.map((node) => {
-                  const isHovered = node.id === hovered;
-                  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-                    "g",
-                    {
-                      onMouseEnter: () => setHovered(node.id),
-                      onMouseLeave: () => setHovered((current) => current === node.id ? null : current),
-                      style: { cursor: "pointer" },
-                      children: [
+                      edge.label !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
                         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                           "rect",
                           {
-                            x: node.rect.x,
-                            y: node.rect.y,
-                            width: node.rect.width,
-                            height: node.rect.height,
-                            rx: node.rect.rx,
-                            fill: node.rect.fill,
-                            stroke: isHovered ? SVG_PALETTE.edgeActive : node.rect.stroke,
-                            strokeWidth: isHovered ? 2 : 1
+                            x: edge.label.x - edge.label.width / 2,
+                            y: edge.label.y - edge.label.height / 2 - 3,
+                            width: edge.label.width,
+                            height: edge.label.height,
+                            rx: 4,
+                            fill: SVG_PALETTE.edgeLabelBg
                           }
                         ),
-                        node.separator !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                          "line",
-                          {
-                            x1: node.separator.x1,
-                            y1: node.separator.y1,
-                            x2: node.separator.x2,
-                            y2: node.separator.y2,
-                            stroke: SVG_PALETTE.separator,
-                            strokeWidth: 1
-                          }
-                        ),
-                        node.texts.map((text, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                           "text",
                           {
-                            x: text.x,
-                            y: text.y,
-                            fontSize: text.size,
-                            fill: text.fill,
-                            textAnchor: text.anchor,
-                            fontWeight: text.weight,
-                            opacity: text.opacity,
-                            pointerEvents: "none",
-                            children: text.text
-                          },
-                          `${node.id}-t${index}`
-                        ))
-                      ]
-                    },
-                    node.id
-                  );
-                })
-              ] })
-            ]
-          }
-        )
-      }
-    ),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.toolbar, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: styles.button, title: labels.zoomOut, onClick: () => {
-        userAdjusted.current = true;
-        zoomAt(hostWidth / 2, viewportHeight / 2, 1 / 1.25);
-      }, children: "\u2212" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: styles.button, title: labels.zoomIn, onClick: () => {
-        userAdjusted.current = true;
-        zoomAt(hostWidth / 2, viewportHeight / 2, 1.25);
-      }, children: "+" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: styles.button, onClick: () => {
-        userAdjusted.current = true;
-        setView(fitWidth());
-      }, children: labels.fitWidth }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: styles.button, onClick: () => {
-        userAdjusted.current = true;
-        setView(fitAll());
-      }, children: labels.fitAll }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: styles.button, title: fileName, onClick: onDownload, children: labels.download })
+                            x: edge.label.x,
+                            y: edge.label.y + 1,
+                            fontSize: 11,
+                            fill: active ? SVG_PALETTE.edgeActive : SVG_PALETTE.edgeLabel,
+                            textAnchor: "middle",
+                            children: edge.label.text
+                          }
+                        )
+                      ] })
+                    ] }, edge.id);
+                  }),
+                  scene.nodes.map((node) => {
+                    const isHovered = node.id === hovered;
+                    const isSelected = node.id === selected;
+                    const emphasised = isHovered || isSelected;
+                    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                      "g",
+                      {
+                        role: "button",
+                        "aria-label": node.title,
+                        "aria-pressed": isSelected,
+                        tabIndex: 0,
+                        onMouseEnter: () => setHovered(node.id),
+                        onMouseLeave: () => setHovered((current) => current === node.id ? null : current),
+                        onClick: (event) => {
+                          event.stopPropagation();
+                          setSelected((current) => current === node.id ? null : node.id);
+                        },
+                        onKeyDown: (event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setSelected((current) => current === node.id ? null : node.id);
+                          }
+                        },
+                        style: { cursor: "pointer", outlineOffset: "2px" },
+                        children: [
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            "rect",
+                            {
+                              x: node.rect.x,
+                              y: node.rect.y,
+                              width: node.rect.width,
+                              height: node.rect.height,
+                              rx: node.rect.rx,
+                              fill: node.rect.fill,
+                              stroke: emphasised ? SVG_PALETTE.edgeActive : node.rect.stroke,
+                              strokeWidth: emphasised ? 2 : 1,
+                              strokeDasharray: isSelected && !isHovered ? "5 3" : void 0
+                            }
+                          ),
+                          node.separator !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            "line",
+                            {
+                              x1: node.separator.x1,
+                              y1: node.separator.y1,
+                              x2: node.separator.x2,
+                              y2: node.separator.y2,
+                              stroke: SVG_PALETTE.separator,
+                              strokeWidth: 1
+                            }
+                          ),
+                          node.texts.map((text, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            "text",
+                            {
+                              x: text.x,
+                              y: text.y,
+                              fontSize: text.size,
+                              fill: text.fill,
+                              textAnchor: text.anchor,
+                              fontWeight: text.weight,
+                              opacity: text.opacity,
+                              pointerEvents: "none",
+                              children: text.text
+                            },
+                            `${node.id}-t${index}`
+                          ))
+                        ]
+                      },
+                      node.id
+                    );
+                  })
+                ] })
+              ]
+            }
+          )
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.toolbar, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: styles.button, title: labels.zoomOut, onClick: () => {
+          userAdjusted.current = true;
+          zoomAt(hostWidth / 2, viewportHeight / 2, 1 / 1.25);
+        }, children: "\u2212" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: styles.button, title: labels.zoomIn, onClick: () => {
+          userAdjusted.current = true;
+          zoomAt(hostWidth / 2, viewportHeight / 2, 1.25);
+        }, children: "+" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: styles.button, onClick: () => {
+          userAdjusted.current = true;
+          setView(fitWidth());
+        }, children: labels.fitWidth }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: styles.button, onClick: () => {
+          userAdjusted.current = true;
+          setView(fitAll());
+        }, children: labels.fitAll }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: styles.button, title: fileName, onClick: onDownload, children: labels.download })
+      ] }),
+      variant === "card" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.hint, children: "\u6EDA\u8F6E\u7F29\u653E \xB7 \u62D6\u52A8\u5E73\u79FB \xB7 \u60AC\u505C\u9AD8\u4EAE\u8FDE\u7EBF \xB7 \u70B9\u51FB\u770B\u8BE6\u60C5" })
     ] }),
-    variant === "card" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.hint, children: "\u6EDA\u8F6E\u7F29\u653E \xB7 \u62D6\u52A8\u5E73\u79FB \xB7 \u60AC\u505C\u8282\u70B9\u9AD8\u4EAE\u8FDE\u7EBF" })
+    selectedNode !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("style", { children: PANEL_CSS }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        NodeDetailPanel,
+        {
+          node: selectedNode,
+          nodesById,
+          labels,
+          onSelect: setSelected,
+          onClose: () => setSelected(null)
+        }
+      )
+    ] })
   ] });
 }
 
@@ -5653,8 +5779,10 @@ var zh = {
   running: "\u6E32\u67D3\u4E2D\u2026",
   done: "\u5DF2\u6E32\u67D3",
   failed: "\u6E32\u67D3\u5931\u8D25",
-  detail: "\u8BE6\u60C5",
-  hide: "\u6536\u8D77",
+  nodeDetail: "\u8282\u70B9\u8BE6\u60C5",
+  inEdges: "\u5165\u8FB9",
+  outEdges: "\u51FA\u8FB9",
+  close: "\u5173\u95ED",
   inspect: "\u67E5\u770B\u8F68\u8FF9",
   saved: "\u5DF2\u843D\u76D8\u5230",
   reparseFailed: "\u5361\u7247\u65E0\u6CD5\u91CD\u7B97\u5E03\u5C40\uFF08\u5BBF\u4E3B\u5DF2\u901A\u8FC7\u6821\u9A8C\uFF0C\u8FD9\u662F\u9884\u89C8\u4FA7\u7684\u95EE\u9898\uFF09",
@@ -5674,8 +5802,10 @@ var en = {
   running: "Rendering\u2026",
   done: "Rendered",
   failed: "Render failed",
-  detail: "Details",
-  hide: "Hide",
+  nodeDetail: "Node detail",
+  inEdges: "Incoming",
+  outEdges: "Outgoing",
+  close: "Close",
   inspect: "Inspect",
   saved: "Saved to",
   reparseFailed: "The card could not re-derive the layout (the host validated it; this is a preview-side problem)",
@@ -5796,7 +5926,11 @@ function DiagramCard(props) {
     fitAll: t("fitAll"),
     zoomIn: t("zoomIn"),
     zoomOut: t("zoomOut"),
-    download: t("download")
+    download: t("download"),
+    detail: t("nodeDetail"),
+    inEdges: t("inEdges"),
+    outEdges: t("outEdges"),
+    close: t("close")
   }), [t]);
   const statusText = slice.state === "preparing" ? t("preparing") : slice.state === "running" ? t("running") : slice.state === "error" ? t("failed") : t("done");
   const counts = model === null ? "" : `${model.layout.nodes.length} ${t("unit")} \xB7 ${model.layout.edges.length} ${t("link")}`;
@@ -5897,7 +6031,11 @@ function previewLabels(t) {
     fitAll: t("fitAll"),
     zoomIn: t("zoomIn"),
     zoomOut: t("zoomOut"),
-    failed: t("failed")
+    failed: t("failed"),
+    detail: t("nodeDetail"),
+    inEdges: t("inEdges"),
+    outEdges: t("outEdges"),
+    close: t("close")
   };
 }
 function registerTurnPreview(ctx, t) {
