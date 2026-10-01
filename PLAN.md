@@ -462,7 +462,7 @@ M0 工程基线
 | 依据文档 | [prd.md](./prd.md) §4.2 / §4.3 / §4.4 / §7 Phase 2 |
 | 前置 | Phase 1 引擎（`schema` / `layout` / `drawio` / `core`）已交付并验收（§5.3） |
 | 交付路线 | **用户裁决（2026-10-01）：先最小闭环 S1 验证插件接口，再接 SVG 卡片 S2** |
-| 状态 | S1 / S2 均已落地并端到端验证（见 P2.4 / P2.6）；遗留见 P2.5 |
+| 状态 | S1 / S2 均已落地并端到端验证（见 P2.4 / P2.6）；**已在换机 + dsh 0.2.0-rc.2 上重新复验**（P2.10 安装根因、P2.12 激活自检、P2.13 三工具冒烟）；遗留见 P2.5 与 P2.14 |
 
 ## P2.1 交付物形态：一个可安装 bundle
 
@@ -837,8 +837,107 @@ peer 的值要同时过 `evaluatePluginCompatibility` 的 `semver.satisfies(runt
 
 | ID | 项 | 说明 | 优先级 |
 | :--- | :--- | :--- | :--- |
-| **T13** | 客户端半在 0.2.0-rc.2 上复验 | 槽位本身还在：live `Slots.listSubTree` 查得到 `tool.call.toolview`（keyed，注册项 `{ key }`）与 `conversation.chat.turnTail`（list，注册项 `{ id, order, label }`），与 `plugin/src/client.tsx` 的注册形态一致；但 T6 / T8 / T10 的实测结论、`presentationMeta → block.meta` 链路都只在 0.1.7-rc.2 上验过 | 中 |
+| **T13** | 客户端半在 0.2.0-rc.2 上复验 | ✅ **已完成**（用户重启 dsh 后实测）。见 §P2.13 |
 | **T14** | 让 `pnpm typecheck:plugin` 在本机可用 | 脚本要 dsh **源码检出**的已构建 `.d.ts`；本机 dsh 只有 `app.asar` 发行包，`@deepseek-ai/cordis` 连 `.d.ts` 都没随包发布（只有 `src/*.ts`），`@types/react` 也不在包里。已去掉写死路径、改成自适配探测（见 §P2.12），但**没有检出目录时仍是硬失败**。两条路：重拉 dsh 源码；或把 asar 里的 `@deepseek-ai/dsh-tools/lib/types/index.d.ts` + `cordis/src/*.ts` 抽到 tmp 再映射（后者要额外解决 `allowImportingTsExtensions` 与 cosmokit 的连锁引用） | 中 |
 | **T15** | 搬迁残留 + 激活自检固化 | ✅ **已完成**：写死的 `F:/gitProject/dsh` 全部去掉，改为 `scripts/dsh-root.mjs` 统一探测（`DSH_DIAGRAM_DSH_ROOT` → 仓库兄弟目录）；自检固化为 `scripts/verify-plugin-activation.ps1`（`pnpm verify:activation`），exe / asar / `$DSH_HOME` 全部自适配 | ✅ |
 
 T9（PRD Phase 3 行内 ` ```arch-yaml `）的挂起理由本轮只做了一次粗查（live slot 树里未见 markdown / 代码块槽，且返回被截断），**未重新裁决**，仍按挂起处理。
+
+## P2.13 重启后三工具冒烟 + T13 结项（2026-10-01）
+
+用户重启 dsh 后，宿主半终于在新进程里加载成功，三个工具全部可用（`listTools` 里可见）。本轮做了一次真实冒烟。
+
+### 三条通道产物同源（不是「看起来一样」）
+
+用同一份规格（`tmp/repo-map.yaml`，本仓库自身的关系图：8 分组 / 23 节点 / 27 连线）分别走**工具通道**与 **CLI 通道**：
+
+| 对比项 | 结果 |
+| :--- | :--- |
+| `yaml_to_drawio(tmp/repo-map.yaml)` | 8 个分组 / 23 个节点 / 27 条连线；`summary` 画布 **2352×1540**（bounds），落盘 `tmp\dsh-diagram 仓库关系图.drawio`（**YAML 同目录**、文件名取 `meta.title`） |
+| 文件里的 `pageWidth/pageHeight` | **2432×1620** = bounds + 40px×2 边距（D5 画布自适应对得上） |
+| `.drawio` 明文 | 两份都是 31,409 字符，**除 `<diagram id/name>` 外完全一致**；无 deflate / base64 |
+| 各自用 draw.io 桌面版导出的 PNG | SHA256 **完全相同**（`7CF025FDB32F48A782A3DA591694016BA3B7AACAE5FAD4A529AA20895FE9C6B9`；见 `tmp/out/repo-map.png` 与 `repo-map-from-tool.png`，均 1,227.3 KB） |
+| 观感 | 卡片预览、`yaml_to_drawio`、CLI 三条路吃同一份引擎，无漂移 |
+
+回程工具 `drawio_to_yaml(out/01-basic.drawio)`：语义字段（title / desc / variant / group / from / to / label / style）全部捡回，并给出**恰好两条**预期告警（几何坐标已丢弃、`layout` 三项不写在 .drawio 里），与设计一致。
+
+顺带一个引擎侧数据点：同一规格设 `layout.direction: LR` 反而更差（交叉 55→**59**、总折数 65→**69**），这份拓扑用缺省 TB 是对的。
+
+### T13 结项证据
+
+| 验收项 | 结果 |
+| :--- | :--- |
+| 客户端半注册（`Slots.listSubTree`，重启后实测） | ✅ `tool.call.toolview` occupants 出现 `render_architecture` / `yaml_to_drawio`；`conversation.chat.turnTail` 出现 `dsh-diagram-turn-preview`（order 50），均 `active: true` |
+| SVG 出图 / 滚轮缩放 / 拖动平移 / 悬停高亮入出边 | ✅ 用户浏览器实测通过 |
+| 点击节点 → 详情面板（3 边高亮、其余淡出、Esc 关闭） | ✅ 同上 |
+| 卡片行下「已落盘到 …」（T7） | ✅ 同上 |
+| 深色 / 浅色主题 | ✅ 同上 |
+
+结论：客户端半的**槽位契约与交互行为**从 0.1.7-rc.2 到 0.2.0-rc.2 **无漂移**，T6 / T8 / T10 的结论继续有效。
+
+## P2.14 发布前检查（T12 开工清单，2026-10-01）
+
+用户判断「可以准备正式发布」。本轮只做**只读检查**，没有发布、没有改发布配置。
+
+`npm pack --dry-run --json`（在 `plugin/` 下，不落盘）给出的发布载荷 **恰好 7 个文件**，`files` 白名单生效 —— `plugin/src/**`、`scripts/`、`PLAN.md`、`tmp/` 都没进去：
+
+| 文件 | 大小 |
+| :--- | :--- |
+| `index.js`（宿主半） | 476,641 B |
+| `client.js`（客户端半） | 216,752 B |
+| `cordis.patch.yml` | 301 B |
+| `icon.svg` | 829 B |
+| `locale/en.json` / `locale/zh.json` | 228 / 208 B |
+| `package.json` | 976 B |
+
+开工前要处理的（按阻塞程度排序）：
+
+| # | 项 | 现状 / 动作 |
+| :--- | :--- | :--- |
+| 1 | **`"private": true` 必须去掉** | `plugin/package.json` 现在是 private，`npm publish` / `pnpm publish` 会直接拒绝（`npm pack` 不受影响，所以上面的载荷检查仍然有效）。这是唯一的硬阻塞 |
+| 2 | 版本号 | 现在 `0.2.0`（与 dsh 运行时版本号巧合相同，容易误读）。发布前定一套自己的版本语义（例如跟着 dsh 大版本对齐，或纯插件自增） |
+| 3 | 包名与 registry | `@gjy_1992/dsh-diagram` 是 scoped 包，需要该 scope 的发布权限；确认目标 registry（npmjs 或私有源） |
+| 4 | `README.md` | `plugin/` 下没有 README，npm 页面会是空的。建议放一份最小 README（安装方式、`render_architecture` 用法、`.drawio` 往返说明）并加进 `files` |
+| 5 | `.npmrc` / token | 仓库里没有 `.npmrc`；发布用的 token 请放**用户级** `~/.npmrc`，不要落到仓库（`.gitignore` 里刻意没有忽略 `.npmrc`，就是为了不让人以为「放进来没事」） |
+| 6 | 发布后如何被安装 | 发布后 profile 侧走 `dsh plugin add @gjy_1992/dsh-diagram`（`plugin_manager install_bundle` + registry spec）。届时依赖解析走 profile 的 `node_modules`，`peerDependencies: ">=0.1.7-rc.2"` 依旧是真闸门（见 §P2.11） |
+| 7 | 回归口径 | 发布前至少跑：`pnpm build` / `pnpm build:plugin` / `pnpm build:examples` / `pnpm audit:routing` / `pnpm verify:activation`（`pnpm typecheck:plugin` 在本机仍缺 dsh 检出，见 T14） |
+
+`.gitignore` 同轮补了一条：`*.tgz`（`pnpm pack` / `npm pack` 的落盘产物）。核对结果：
+
+| 路径 | 现状 |
+| :--- | :--- |
+| `node_modules/`（含各 package、`plugin/` 下的） | 已忽略（无前导 `/`，任意层级生效）；仓库里**没有**误提交的 `node_modules` |
+| `out/` `tmp/` | 已忽略（CLI 产物、临时验证） |
+| `*.log`（含 `.pnpm-debug.log`） | 已忽略 |
+| `*.tgz` | **本轮新增忽略**（此前会以未跟踪文件出现在仓库里） |
+| `pnpm-lock.yaml` / `pnpm-workspace.yaml` | **必须保持跟踪**（依赖与 workspace 的source of truth，不是产物） |
+| `plugin/node_modules/` | 已被 `node_modules/` 覆盖；本轮排查时它已被删除，`git check-ignore` 对不存在的路径不判目录，属正常现象 |
+| `plugin/pnpm-lock.yaml` | 未忽略。目前已无实际依赖（只有 peer），暂不处理；将来若给 `plugin/` 自己的 install，再决定是否跟踪 |
+
+## P2.15 T9 在 0.2.0 上的可行性复核（**只讨论，未动工**）
+
+用户要求「只讨论」。结论：**markdown 渲染器那扇门仍然关着；但 0.2.0 多了一扇当时没查到的门 —— 插件可以注册自己的 Conversation Definition，在对话流里按位置插一个节点。** 因此「正文里原地把围栏换成预览」做不到，「在消息所在位置多出一行预览」可以做到（纯客户端、可热更新、不用重启宿主）。
+
+### markdown 这条线：老路逐条复验，全部仍然不通
+
+| 可能的接缝 | 0.2.0 实况 | 证据 |
+| :--- | :--- | :--- |
+| 渲染器上挂自定义围栏 | ❌ | `MarkdownText({ text, streaming, labels, fileMentions, pathImages, variant })` 纯 props；`renderCode()` 只特判 `lang === "math"`，其余一律进 `CodeBlock` |
+| 渲染器内部插槽 | ❌ | `dsh-client-ui-primitives` 整包里 **0 处** `slots.` / `useSlot` / `registerFactory` |
+| 渲染相关 Client 服务 / 事件 | ❌ | Client Service 目录只有 8 个（layout / locale / sessions / slots / theme / timer / uiWorkspace / workspaces）；Client Event 只有 4 个（connection/reset、locale/change、slots/changed、theme/change） |
+| `MarkdownDelegateProvider`（新面孔） | ❌ | 只代理 `openExternalLink` / `openFile` / `fileImages`，不碰代码块 |
+| DOM 拦截 `language-arch-yaml` | ❌ | practices 明禁：*Do not write DOM outside your component or append to `document.body`* |
+| 接管 `assistant-step` | ⚠️ 可行、代价照旧 | `conversation.chat.node`（keyed）：*"Reusing a key replaces that node renderer"*；要自己重写整段 markdown，而 primitives 不许 import |
+
+### 新门：插件自有的 Conversation Definition
+
+`conversation.chat.node` 的目录说明写明：*"a kind with no occupant renders no row"* + *"the entry renders where the owner dispatches this exact key"*；而 dispatch 的来源可扩展 —— `ctx.uiConversation.events.register(definition)`（ui-chat 自己的每一行都这么来的）。契约可照抄 `assistantDefinition`：`{ kind, target, match, start, update, publication, buildLocationData, buildViewNode }`。practices 第 37 条正是把「definition + 在 `conversation.chat.node` 注册同 kind 的视图」写成第三方插件加行的正规用法。
+
+对 T9 的落法：`match` 盯 `assistant/message`（`event.data.message.content`）与可选的 `user/message`（`event.data.content`）→ 找 ` ```arch-yaml ` → `buildViewNode` 有围栏才返回自己的 kind → 视图复用现有 `diagram/scene.ts` + `DiagramCanvas`。
+
+**能得到**：在正确位置（该消息所在 step/turn、按 `seq`）多出一行/一张卡，比 T6 的「回合末尾」精确，且覆盖用户手敲的围栏；**纯客户端 → 刷新页面即生效**。
+**得不到**：不是正文原地替换 —— 围栏仍会被宿主渲染成普通代码块（对 PRD 的「双通道容错」算符合预期，但确实重复呈现）。
+
+风险：契约是内部契约（无 README、不在 Service 目录里，`uiConversation` 是 scoped 服务）；节点 shape 不能 import（要手写、无类型检查）；落点由 Conversation 层裁决（**必须 spike 实测**）；流式事件需要处理；`ChatNodeKind` 是 owner 的表，我们用的是表外 kind（catalog 无 `allowedKeys` 闸门，practices 也认，但属"靠约定不靠类型"）。
+
+建议的下手顺序：① 30 分钟 spike 只验「注册新 key + definition → 出不出行、落在哪」；② 过了再谈实现；③ 验收口径写死位置与"不重复出图"；④ 仍然不碰 DOM、不接管 `assistant-step`。
