@@ -758,3 +758,87 @@ $ pnpm exec tsx scripts/roundtrip-check.ts
 ### 生效条件（重要）
 
 宿主半的改动（T2 的合并报告 + 两个新工具）**必须重启 dsh 才生效**（P2.4 的 C2）；客户端半刷新页面即生效。本轮改动攒到**一次重启**。
+
+## P2.10 换机 + 换 dsh 版本后的安装复验（2026-10-01）
+
+> 触发：仓库从 `F:\gitProject\dsh-plugins\dsh-diagram` 搬到 `C:\gitProject\dsh-diagram`，宿主 dsh 从 `0.1.7-rc.2` 升到 **`0.2.0-rc.2`**（§P2.4 / §P2.6 / §P2.7 / §P2.8 的全部验收结论都记在 0.1.7-rc.2 上）。
+
+### 结果
+
+| 项 | 结果 |
+| :--- | :--- |
+| bundle 安装（`plugin_manager install_bundle`，`target = C:\gitProject\dsh-diagram\plugin`） | ✅ profile 依赖得到 `link:C:/gitProject/dsh-diagram/plugin`、`dsh.profile.bundles` 增加 `@gjy_1992/dsh-diagram`、`cordis.patch.yml` 出现 `- id: dsh-diagram / disabled: false` |
+| 宿主半激活（**已在跑的进程内**） | ❌ `dsh-diagram (@gjy_1992/dsh-diagram): failed to import`；**重启 dsh 后生效**（根因见下） |
+| 宿主半激活（**新进程**） | ✅ 隔离 profile 起 dsh，stderr 无 `did not activate`；把 `plugin/index.js` 挪走做反例，同一告警立刻复现（A/B 对照） |
+| 引擎侧回归 | ✅ `pnpm build` exit 0；`pnpm build:examples` 5/5；`pnpm audit:routing` 非正交 / 穿节点 / 穿无关分组框 / 交叉 = 0 |
+
+### 根因（实测，非猜测）
+
+1. **link 进来的插件必须声明 peer，运行时包才会被路由到 dsh 自带那一份。** `@deepseek-ai/dsh-app-boot` 的 `routeLinked()` 对「linked root」里的 bare 请求只做两件事：查运行时包表 + 读**该目录 `package.json` 的 `peerDependencies`**；两者都命中才把请求改路由到运行时包（`app-boot/lib/index.js` 的 `routeLinked`）。原 `plugin/package.json` 一个 peer 都没写（`src/host.ts` 的注释还写着「本包不声明依赖」），于是 `@deepseek-ai/dsh-tools` 走原生解析 → `ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/dsh-tools' imported from C:\gitProject\dsh-diagram\plugin\index.js`；而 app-boot 对「`entry.fiber === undefined`」一律只报 `failed to import`，把真实原因吞了。
+   **修法**：`plugin/package.json` 补 peer：`"@deepseek-ai/dsh-tools": ">=0.1.7-rc.2"`（取值理由见 §P2.11）—— 与 dsh 自带 `dsh-tool-fs` / `dsh-tool-bash` 的写法同类。这条 peer 同时承担两个职责：**路由键**（`routeLinked` 靠它决定要不要改路由）与**兼容性闸门**（`evaluatePluginCompatibility` 拿它比对运行时版本，不匹配就把整行 disable 掉），所以区间必须真的覆盖你要支持的那些运行时。
+2. **C4 · 失败的模块作业会被进程缓存，因此「补完依赖再点一次启用」没用。** Node 按 URL 缓存 ModuleJob：一次 import 失败后，同一进程内再 import 同一个 URL 会直接返回那条旧 rejection。最小复现：`app-pkg` 静态 import 一个不存在的 `missing-dep` → 第一次 `ERR_MODULE_NOT_FOUND`；补上 `missing-dep` 后再 import，**仍然报同一个错**。→ **宿主半任何 import 级修复都必须重启 dsh**。P2.4 的 C2 只覆盖了「成功加载过的模块不会失效」，没覆盖这一条。
+
+### 无重启的宿主半激活自检（本轮手法，可复用）
+
+desktop profile 被 Electron 独占，CLI 拒绝 boot（`error: profile "desktop" is managed exclusively by the Electron application`）。改为临时开一个隔离 profile，规则是：
+
+* `$DSH_HOME/profiles/<name>/package.json`：`dsh.profile.bundles = [@deepseek-ai/dsh-base, @gjy_1992/dsh-diagram]`，`dependencies` 里 link 到 `plugin/`；`node_modules/@gjy_1992/dsh-diagram` 用 `mklink /J` 指过去；`cordis.patch.yml` 必须是 `[]`（注释-only 会让 boot 失败）。
+* 起进程：`$env:ELECTRON_RUN_AS_NODE='1'; & "<安装目录>\DeepSeek Harness.exe" --expose-internals "<app.asar>\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js" --profile <name>`，读 stderr 里有没有 `did not activate`。
+* 坑：该 profile 的 `package.json` **不能带 BOM**。PS 5.1 的 `Set-Content -Encoding utf8` 会写 BOM，CLI 直接 `SyntaxError: Unexpected token '﻿'`。
+
+这套手法已固化成脚本，用法见 §P2.12。
+
+## P2.11 peer 版本区间怎么写（回答「0.1.7-rc.2 也要能跑」）
+
+peer 的值要同时过 `evaluatePluginCompatibility` 的 `semver.satisfies(runtimeVersion, range, { includePrerelease: true })`（`app-boot/lib/index.js:300`）。**`includePrerelease: true` 并不等于「预发布随便匹配」**：`^0.1.7-rc.2` 的上界会被 semver 改写成 `<0.2.0-0`，因此它**不覆盖** `0.2.0-rc.2`。
+
+用宿主自带的那份 semver 实测（`...\app.asar\node_modules\semver`）：
+
+| range | 0.1.7-rc.2 | 0.1.7 | 0.2.0-rc.1 | 0.2.0-rc.2 | 0.2.0 | 0.2.5 | 0.3.0-rc.1 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `^0.1.7-rc.2` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `^0.2.0-rc.2` | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ |
+| **`^0.1.7-rc.2 \|\| ^0.2.0-rc.2`** | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ |
+| `>=0.1.7-rc.2 <0.3.0` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `*` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+**结论（用户裁决 2026-10-01）**：取 `">=0.1.7-rc.2"`。理由：兼容性闸门此刻不是我们要防的东西 —— 要防的是「装不上」，而 `>=` 下界保证 0.1.7-rc.2 与 0.2.0-rc.2 都能装；等以后真遇到不兼容的运行时版本，再按上表收窄成 `^… || ^…` 不迟。代价要认下来：`>=0.1.7-rc.2` 在实测里放行 `0.2.0-rc.1`、`1.0.0` 等一切更高版本（预检不再提供保护）。
+
+补一条：**在 0.1.7-rc.2 上这行 peer 是「无害但可能无用」** —— 那版没有 `routeLinked` 的 peer 路由（当年不写 peer 也能跑），但若那版已有兼容性预检，`^0.1.7-rc.2` 这一支会让它判定为兼容。两端都不会因此被拒载。
+
+还有一个「永远兼容」的写法：`"workspace:^"`（`workspace:~` / `workspace:*` 同理）。源码里它会被**替换成运行时版本本身**再比对（`app-boot/lib/index.js:295-300`），所以 `satisfies(v, v)` 恒真、永不被拒载 —— 代价是**放弃兼容性闸门**：以后 API 真变了也会照跑。要用它就得接受「闸门交给使用者自己把关」这个前提；本仓库当前不采用。
+
+## P2.12 自检脚本：`pnpm verify:activation`（T15 交付）
+
+`scripts/verify-plugin-activation.ps1` 把 §P2.10 那套手工流程固化，并且**不写死任何本机路径**：
+
+| 需要什么 | 怎么自适配 |
+| :--- | :--- |
+| Electron 可执行文件 | `-HostExe` → `DSH_DIAGRAM_HOST_EXE` → **正在运行的宿主进程**（`Get-Process` 里挑旁边有 `resources\app.asar` 的） → `%LOCALAPPDATA%\Programs` → `%ProgramFiles%` → 注册表卸载项（`DisplayIcon` / `InstallLocation`） |
+| `app.asar` / dsh CLI 入口 | 由 exe 同级推出 `resources\app.asar` 与 `<asar>\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js`；asar 内部路径在纯 PowerShell 里看不见，可读性交给 Electron 运行时去证明 |
+| `$DSH_HOME` | `-DshHome` → `DSH_HOME` 环境变量 → `%USERPROFILE%\.dsh` |
+| 隔离 profile | 现造现删（`-KeepProfile` 保留现场）；删之前有「只允许删 `$DSH_HOME\profiles\<ProfileName>`」的路径闸 |
+
+它做两步断言，缺一不可：① `--dump-config` 的组合结果里**必须出现本插件**（否则「压根没组合进来」会以 stderr 干净的形式假绿）；② 新进程启动 stderr **不得**命中 `did not activate` / `failed to import` / `ERR_MODULE_NOT_FOUND` / `Cannot find package` / `disabling profile plugin` / `incompatible with dsh`。
+
+实测对照：
+
+| 场景 | 结果 |
+| :--- | :--- |
+| 正常插件 | ✅ exit 0（`组合正常且启动无激活告警`） |
+| `plugin/index.js` 挪走 | ❌ exit 1（预检直接报「宿主半产物缺失」） |
+| `index.js` 存在但 `import` 一个不存在的包 | ❌ exit 1，并把宿主原文 `dsh: warning: 1 entry did not activate / dsh-diagram: failed to import` 打出来 |
+
+维护注意：这个 `.ps1` 是 **UTF-8 带 BOM** 的（`scripts/verify.ps1` 是纯 ASCII 所以没这问题）。Windows PowerShell 5.1 会把无 BOM 的 UTF-8 当 ANSI 读，中文注释会变乱码并把脚本解析坏；编辑时别把 BOM 丢掉。
+
+顺带（同一轮）：`scripts/build-plugin.mjs` 与 `scripts/typecheck-plugin.mjs` 里写死的 `F:/gitProject/dsh` 已删除，统一改用 `scripts/dsh-root.mjs`（`DSH_DIAGRAM_DSH_ROOT` → 仓库兄弟目录 → 找不到就抛出**列明候选**的报错，不静默跳过）。
+
+### 新登记（接 §P2.5 的 T 编号）
+
+| ID | 项 | 说明 | 优先级 |
+| :--- | :--- | :--- | :--- |
+| **T13** | 客户端半在 0.2.0-rc.2 上复验 | 槽位本身还在：live `Slots.listSubTree` 查得到 `tool.call.toolview`（keyed，注册项 `{ key }`）与 `conversation.chat.turnTail`（list，注册项 `{ id, order, label }`），与 `plugin/src/client.tsx` 的注册形态一致；但 T6 / T8 / T10 的实测结论、`presentationMeta → block.meta` 链路都只在 0.1.7-rc.2 上验过 | 中 |
+| **T14** | 让 `pnpm typecheck:plugin` 在本机可用 | 脚本要 dsh **源码检出**的已构建 `.d.ts`；本机 dsh 只有 `app.asar` 发行包，`@deepseek-ai/cordis` 连 `.d.ts` 都没随包发布（只有 `src/*.ts`），`@types/react` 也不在包里。已去掉写死路径、改成自适配探测（见 §P2.12），但**没有检出目录时仍是硬失败**。两条路：重拉 dsh 源码；或把 asar 里的 `@deepseek-ai/dsh-tools/lib/types/index.d.ts` + `cordis/src/*.ts` 抽到 tmp 再映射（后者要额外解决 `allowImportingTsExtensions` 与 cosmokit 的连锁引用） | 中 |
+| **T15** | 搬迁残留 + 激活自检固化 | ✅ **已完成**：写死的 `F:/gitProject/dsh` 全部去掉，改为 `scripts/dsh-root.mjs` 统一探测（`DSH_DIAGRAM_DSH_ROOT` → 仓库兄弟目录）；自检固化为 `scripts/verify-plugin-activation.ps1`（`pnpm verify:activation`），exe / asar / `$DSH_HOME` 全部自适配 | ✅ |
+
+T9（PRD Phase 3 行内 ` ```arch-yaml `）的挂起理由本轮只做了一次粗查（live slot 树里未见 markdown / 代码块槽，且返回被截断），**未重新裁决**，仍按挂起处理。
