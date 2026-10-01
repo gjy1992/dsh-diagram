@@ -18,6 +18,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { dshCheckoutCandidates } from './dsh-root.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const PLUGIN_DIR = join(ROOT, 'plugin')
@@ -42,11 +43,15 @@ function pnpmEsbuildCandidates(root) {
 /** 解析 esbuild：候选逐个尝试，全部失败时给出可操作的提示。 */
 function loadEsbuild() {
   const require = createRequire(import.meta.url)
+  // 别的 dsh 工作区里的 esbuild：显式指定的根 → 本机 dsh 检出（`DSH_DIAGRAM_DSH_ROOT` / 兄弟目录，
+  // 不再写死某台机器的盘符，见 scripts/dsh-root.mjs）。
+  const otherRoots = [process.env.DSH_DIAGRAM_ESBUILD_ROOT, ...dshCheckoutCandidates()]
+    .filter((value) => typeof value === 'string' && value.length > 0)
   const candidates = [
     process.env.DSH_DIAGRAM_ESBUILD,
     'esbuild',
     ...pnpmEsbuildCandidates(ROOT).reverse(),
-    ...pnpmEsbuildCandidates(process.env.DSH_DIAGRAM_ESBUILD_ROOT ?? 'F:/gitProject/dsh').reverse(),
+    ...otherRoots.flatMap((root) => pnpmEsbuildCandidates(root).reverse()),
   ].filter((value) => typeof value === 'string' && value.length > 0)
 
   const failures = []

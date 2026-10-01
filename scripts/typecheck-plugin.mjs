@@ -9,9 +9,13 @@
  *
  * 做法：**生成**一份临时 tsconfig（`tmp/tsconfig.plugin.json`，gitignore），把三个外部依赖
  * 映射到本机 dsh 已构建的 `.d.ts` 上，再用本仓库的 tsc 检查。刻意不把机器相关路径写进仓库 ——
- * 换台机器只要 dsh 检出还在（或设 `DSH_DIAGRAM_DSH_ROOT`）就能跑。
+ * 换台机器只要 dsh 检出还在（或设 `DSH_DIAGRAM_DSH_ROOT`）就能跑，定位逻辑统一在
+ * `scripts/dsh-root.mjs`。
  *
  * 找不到 dsh 检出目录时**直接失败**，不静默跳过：一个会静默跳过的类型检查等于没有。
+ * 注意「安装版 dsh」（`%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\app.asar`）**不够用**：
+ * 它没随包发布 `@deepseek-ai/cordis` 的 `.d.ts`（只有 `src/*.ts`），拿它顶会得到一份缺类型的假绿，
+ * 详见 PLAN.md §P2.10 T14。
  *
  * 用法：`pnpm typecheck:plugin`
  */
@@ -19,6 +23,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { requireDshCheckout } from './dsh-root.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT_DIR = join(ROOT, 'tmp')
@@ -29,27 +34,6 @@ const OUT_FILE = join(OUT_DIR, 'tsconfig.plugin.json')
  * 而带 shell 又要自己处理引号转义 —— 用 `process.execPath + bin/tsc` 最干净。
  */
 const TSC_JS = join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc')
-
-/** 定位 dsh 检出目录：环境变量 → 同盘兄弟目录 → 已知本机位置。 */
-function findDshRoot() {
-  const candidates = [
-    process.env.DSH_DIAGRAM_DSH_ROOT,
-    resolve(ROOT, '..', 'dsh'),
-    resolve(ROOT, '..', '..', 'dsh'),
-    'F:/gitProject/dsh',
-  ].filter((value) => typeof value === 'string' && value.length > 0)
-
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, 'packages', 'core', 'tools', 'lib', 'types', 'index.d.ts'))) {
-      return candidate
-    }
-  }
-  throw new Error(
-    '找不到 dsh 检出目录（需要它已构建的 .d.ts 才能检查插件两半）。已尝试：\n'
-    + candidates.map((value) => `  - ${value}`).join('\n') + '\n'
-    + '可设 DSH_DIAGRAM_DSH_ROOT 指定，或在该检出目录里先跑一次构建。',
-  )
-}
 
 /** pnpm 存储里的 @types/react 目录（取最高版本）。 */
 function findTypesReact(dshRoot) {
@@ -66,7 +50,7 @@ function findTypesReact(dshRoot) {
   throw new Error(`pnpm 存储里没有 @types/react：${store}`)
 }
 
-const dshRoot = findDshRoot()
+const dshRoot = requireDshCheckout('检查插件两半的类型')
 const dshToolsTypes = join(dshRoot, 'packages', 'core', 'tools', 'lib', 'types', 'index.d.ts')
 const cordisTypes = join(dshRoot, 'vendor', 'cordis', 'lib', 'types', 'index.d.ts')
 const reactTypes = findTypesReact(dshRoot)

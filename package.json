@@ -16,7 +16,8 @@
     "verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1",
     "audit:routing": "tsx scripts/audit-routing.ts",
     "build:plugin": "node scripts/build-plugin.mjs",
-    "typecheck:plugin": "node scripts/typecheck-plugin.mjs"
+    "typecheck:plugin": "node scripts/typecheck-plugin.mjs",
+    "verify:activation": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-plugin-activation.ps1"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
