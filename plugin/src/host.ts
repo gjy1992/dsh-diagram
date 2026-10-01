@@ -17,7 +17,8 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { renderArchitecture, type Diagnostic } from '@dsh-diagram/core'
+import { renderArchitecture } from '@dsh-diagram/core'
+import type { Diagnostic } from '@dsh-diagram/schema'
 import { createDrawioToYaml, createYamlToDrawio } from './tools/files'
 
 /** 需要的宿主服务：工具注册表。文件系统只在 save_drawio 时按需读取。 */
