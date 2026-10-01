@@ -5655,9 +5655,10 @@ var zh = {
   failed: "\u6E32\u67D3\u5931\u8D25",
   detail: "\u8BE6\u60C5",
   hide: "\u6536\u8D77",
+  inspect: "\u67E5\u770B\u8F68\u8FF9",
   saved: "\u5DF2\u843D\u76D8\u5230",
   reparseFailed: "\u5361\u7247\u65E0\u6CD5\u91CD\u7B97\u5E03\u5C40\uFF08\u5BBF\u4E3B\u5DF2\u901A\u8FC7\u6821\u9A8C\uFF0C\u8FD9\u662F\u9884\u89C8\u4FA7\u7684\u95EE\u9898\uFF09",
-  metaMissing: "\u5361\u7247\u8BFB\u4E0D\u5230 YAML\uFF1A\u6587\u4EF6\u7EA7\u5DE5\u5177\u7684 meta \u6CA1\u9001\u8FBE\uFF08\u7ECF run_code \u5D4C\u5957\u8C03\u7528\u65F6\u4F1A\u8FD9\u6837\uFF09\u3002\u8BF7\u5C55\u5F00\u300C\u8BE6\u60C5\u300D\u67E5\u770B\u5BBF\u4E3B\u8FD4\u56DE\u7684\u6458\u8981\u4E0E\u843D\u76D8\u8DEF\u5F84\u3002",
+  metaMissing: "\u5361\u7247\u8BFB\u4E0D\u5230 YAML\uFF1A\u6587\u4EF6\u7EA7\u5DE5\u5177\u7684 meta \u6CA1\u9001\u8FBE\uFF08\u7ECF run_code \u5D4C\u5957\u8C03\u7528\u65F6\u4F1A\u8FD9\u6837\uFF09\u3002\u5C55\u5F00\u300C\u8BE6\u60C5\u300D\u53EF\u770B\u5BBF\u4E3B\u8FD4\u56DE\u7684\u6458\u8981\u4E0E\u843D\u76D8\u8DEF\u5F84\u3002",
   turnTitle: "\u672C\u56DE\u5408\u67B6\u6784\u56FE",
   fitWidth: "\u9002\u5E94\u5BBD\u5EA6",
   fitAll: "\u6574\u56FE",
@@ -5675,6 +5676,7 @@ var en = {
   failed: "Render failed",
   detail: "Details",
   hide: "Hide",
+  inspect: "Inspect",
   saved: "Saved to",
   reparseFailed: "The card could not re-derive the layout (the host validated it; this is a preview-side problem)",
   metaMissing: "The card cannot read the YAML: the file-tool meta did not reach the client (this happens for run_code sub-calls). Expand Details for the host summary and saved path.",
@@ -5687,6 +5689,43 @@ var en = {
   unit: "nodes",
   link: "edges"
 };
+var CARD_CSS = `
+.dsh-diagram-card { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); }
+.dsh-diagram-row { display: flex; align-items: center; min-height: 24px; border-radius: 6px; }
+.dsh-diagram-row[data-expandable="true"] { cursor: pointer; }
+.dsh-diagram-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+.dsh-diagram-leading { display: inline-flex; align-items: center; justify-content: center; width: 16px; flex: 0 0 16px; }
+.dsh-diagram-dot { width: 8px; height: 8px; border-radius: 50%; }
+.dsh-diagram-title { font-size: 13px; font-weight: 400; color: var(--dsw-alias-label-primary);
+  transition: color 100ms ease; white-space: nowrap; }
+.dsh-diagram-sep { flex: none; width: 2px; height: 2px; border-radius: 1px; margin: 0 8px;
+  background: var(--dsw-alias-label-caption); }
+.dsh-diagram-summary { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--dsh-content-font-size-secondary, 13px); line-height: 24px;
+  color: var(--dsw-alias-label-tertiary); transition: color 100ms ease; }
+.dsh-diagram-status { flex: none; margin-left: 8px; font-size: var(--dsh-content-font-size-secondary, 13px); }
+.dsh-diagram-chevron { flex: none; display: inline-flex; margin-left: 8px; color: var(--dsw-alias-label-secondary);
+  transition: transform 120ms ease; }
+.dsh-diagram-chevron[data-open="true"] { transform: rotate(90deg); }
+.dsh-diagram-row:hover .dsh-diagram-summary { color: var(--dsw-alias-label-primary); }
+.dsh-diagram-body { font-family: var(--ds-font-family-code, ui-monospace, Menlo, Consolas, monospace);
+  font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+  color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; padding: 8px 10px; margin: 0;
+  max-height: 260px; overflow: auto; }
+.dsh-diagram-note { font-size: var(--dsh-content-font-size-secondary, 13px); color: var(--dsw-alias-label-tertiary); }
+.dsh-diagram-saved { font-family: var(--ds-font-family-code, ui-monospace, Menlo, Consolas, monospace); font-size: 11px;
+  color: var(--dsw-alias-label-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-diagram-inspect { display: inline-flex; align-self: flex-start; align-items: center; gap: 4px;
+  margin: 2px 0 0 4px; padding: 2px 8px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 999px;
+  background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-secondary);
+  font-size: 11px; line-height: 16px; cursor: pointer; opacity: 0; transition: opacity 100ms ease; }
+.dsh-diagram-card:hover .dsh-diagram-inspect, .dsh-diagram-inspect:focus-visible { opacity: 1; }
+.dsh-diagram-inspect:hover { background: var(--dsw-alias-interactive-bg-hover-solid); color: var(--dsw-alias-label-primary); }
+.dsh-diagram-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; }
+`;
 function asRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
 }
@@ -5714,77 +5753,35 @@ function readSlice(block) {
   const state = !settled ? block.phase === "preparing" ? "preparing" : "running" : isError ? "error" : "ok";
   return { argsRaw, yamlSpec, title, result, savedPath, isError, state };
 }
-var styles3 = {
-  row: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "8px",
-    padding: "10px 12px",
-    border: "1px solid var(--dsw-alias-border-l1)",
-    borderRadius: "10px",
-    background: "var(--dsw-alias-bg-layer-1)"
-  },
-  head: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    fontSize: "13px",
-    color: "var(--dsw-alias-label-primary)"
-  },
-  dot: { width: "8px", height: "8px", borderRadius: "50%", flex: "0 0 auto" },
-  name: { fontWeight: 600, flex: "0 0 auto" },
-  summary: {
-    flex: "1 1 auto",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    color: "var(--dsw-alias-label-secondary)",
-    fontSize: "12px"
-  },
-  status: { flex: "0 0 auto", fontSize: "12px" },
-  toggle: {
-    flex: "0 0 auto",
-    border: "none",
-    background: "transparent",
-    color: "var(--dsw-alias-label-secondary)",
-    cursor: "pointer",
-    fontSize: "12px",
-    padding: "2px 4px"
-  },
-  body: {
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-    fontSize: "12px",
-    lineHeight: 1.6,
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    color: "var(--dsw-alias-label-secondary)",
-    background: "var(--dsw-alias-bg-layer-2)",
-    border: "1px solid var(--dsw-alias-border-l1)",
-    borderRadius: "8px",
-    padding: "8px 10px",
-    margin: 0,
-    maxHeight: "260px",
-    overflow: "auto"
-  },
-  note: { fontSize: "12px", color: "var(--dsw-alias-label-secondary)" },
-  saved: {
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-    fontSize: "11px",
-    color: "var(--dsw-alias-label-secondary)",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap"
-  }
-};
 function stateColor(state) {
   if (state === "error") return "var(--dsw-alias-state-error-primary)";
   if (state === "ok") return "var(--dsw-alias-state-success-primary)";
   return "var(--dsw-alias-state-idle-primary)";
 }
+function useLocalDisclosure() {
+  const [expanded, setExpanded] = (0, import_react4.useState)(false);
+  return { expanded, toggle: () => setExpanded((value) => !value) };
+}
+function Chevron({ open }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { className: "dsh-diagram-chevron", "data-open": open ? "true" : "false", "aria-hidden": true, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+    "svg",
+    {
+      width: "12",
+      height: "12",
+      viewBox: "0 0 12 12",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1.5",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("path", { d: "M4.5 2.5 L8 6 L4.5 9.5" })
+    }
+  ) });
+}
 function DiagramCard(props) {
-  const { callId, block, t } = props;
+  const { callId, block, t, inspect } = props;
   const slice = readSlice(block);
-  const [open, setOpen] = (0, import_react4.useState)(false);
+  const { expanded, toggle } = props.useDisclosure();
   const { model, error: modelError } = useDiagramModel(slice.yamlSpec, slice.title);
   const onDownload = (0, import_react4.useCallback)(() => {
     if (model === null) return;
@@ -5805,41 +5802,92 @@ function DiagramCard(props) {
   const counts = model === null ? "" : `${model.layout.nodes.length} ${t("unit")} \xB7 ${model.layout.edges.length} ${t("link")}`;
   const summary = [counts, slice.title !== "" ? slice.title : model?.title ?? ""].filter((part) => part !== "").join(" \xB7 ");
   const details = slice.result ?? slice.argsRaw ?? "";
+  const expandable = details !== "";
   const canRender = model !== null;
   const metaMissing = slice.state !== "preparing" && slice.state !== "error" && slice.yamlSpec === "";
-  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: styles3.row, "data-dsh-diagram-card": props.toolName ?? "render_architecture", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: styles3.head, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { ...styles3.dot, background: stateColor(slice.state) }, "aria-hidden": true }),
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: styles3.name, children: t("title") }),
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: styles3.summary, children: summary === "" ? statusText : summary }),
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { ...styles3.status, color: stateColor(slice.state) }, children: statusText }),
-      details !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("button", { type: "button", style: styles3.toggle, onClick: () => setOpen((value) => !value), children: open ? t("hide") : t("detail") })
-    ] }),
-    canRender && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-      DiagramCanvas,
-      {
-        scene: model.scene,
-        fileName: model.title,
-        onDownload,
-        labels,
-        idPrefix: `dsh-diagram-${callId ?? "call"}`
-      }
-    ),
-    slice.savedPath !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: styles3.saved, title: slice.savedPath, children: [
-      t("saved"),
-      " ",
-      slice.savedPath
-    ] }),
-    slice.state === "error" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("pre", { style: { ...styles3.body, color: "var(--dsw-alias-state-error-primary)" }, children: slice.result ?? "" }),
-    metaMissing && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: styles3.note, children: t("metaMissing") }),
-    modelError !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: styles3.note, children: [
-      t("reparseFailed"),
-      ": ",
-      modelError
-    ] }),
-    slice.state !== "error" && model === null && modelError === null && !metaMissing && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: styles3.note, children: statusText }),
-    open && details !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("pre", { style: styles3.body, children: details })
-  ] });
+  const open = expanded && expandable;
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+    "div",
+    {
+      className: "dsh-diagram-card",
+      "data-dsh-diagram-card": props.toolName ?? "render_architecture",
+      "data-state": slice.state,
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("style", { children: CARD_CSS }),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { className: "dsh-diagram-visually-hidden", children: statusText }),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+          "div",
+          {
+            className: "dsh-diagram-row",
+            "data-expandable": expandable ? "true" : "false",
+            role: expandable ? "button" : void 0,
+            tabIndex: expandable ? 0 : void 0,
+            "aria-expanded": expandable ? open : void 0,
+            onClick: expandable ? toggle : void 0,
+            onKeyDown: expandable ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                toggle();
+              }
+            } : void 0,
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { className: "dsh-diagram-leading", children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { className: "dsh-diagram-dot", style: { background: stateColor(slice.state) }, "aria-hidden": true }) }),
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { className: "dsh-diagram-title", children: t("title") }),
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { className: "dsh-diagram-sep", "aria-hidden": true }),
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { className: "dsh-diagram-summary", children: summary === "" ? statusText : summary }),
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { className: "dsh-diagram-status", style: { color: stateColor(slice.state) }, children: statusText }),
+              expandable && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Chevron, { open })
+            ]
+          }
+        ),
+        canRender && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          DiagramCanvas,
+          {
+            scene: model.scene,
+            fileName: model.title,
+            onDownload,
+            labels,
+            idPrefix: `dsh-diagram-${callId ?? "call"}`
+          }
+        ),
+        slice.savedPath !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "dsh-diagram-saved", title: slice.savedPath, children: [
+          t("saved"),
+          " ",
+          slice.savedPath
+        ] }),
+        slice.state === "error" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("pre", { className: "dsh-diagram-body", style: { color: "var(--dsw-alias-state-error-primary)" }, children: slice.result ?? "" }),
+        metaMissing && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { className: "dsh-diagram-note", children: t("metaMissing") }),
+        modelError !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "dsh-diagram-note", children: [
+          t("reparseFailed"),
+          ": ",
+          modelError
+        ] }),
+        slice.state !== "error" && model === null && modelError === null && !metaMissing && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { className: "dsh-diagram-note", children: statusText }),
+        open && details !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("pre", { className: "dsh-diagram-body", children: details }),
+        inspect !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("button", { type: "button", className: "dsh-diagram-inspect", onClick: inspect, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+            "svg",
+            {
+              width: "11",
+              height: "11",
+              viewBox: "0 0 12 12",
+              fill: "none",
+              stroke: "currentColor",
+              strokeWidth: "1.3",
+              strokeLinecap: "round",
+              strokeLinejoin: "round",
+              "aria-hidden": true,
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("circle", { cx: "6", cy: "6", r: "4.2" }),
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("path", { d: "M6 3.4 V6 L7.8 7.2" })
+              ]
+            }
+          ),
+          t("inspect")
+        ] })
+      ]
+    }
+  );
 }
 function previewLabels(t) {
   return {
@@ -5877,7 +5925,17 @@ var client_default = {
       for (const key of TOOL_NAMES) {
         yield ctx.slots.register(
           { name: "tool.call.toolview", key, locale: NS },
-          (props) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(DiagramCard, { ...props, t })
+          (props) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+            DiagramCard,
+            {
+              callId: props.callId,
+              toolName: props.toolName,
+              block: props.block,
+              useDisclosure: props.useDisclosure ?? useLocalDisclosure,
+              inspect: props.inspect,
+              t
+            }
+          )
         );
       }
     });

@@ -9,6 +9,16 @@
  *      ②③ 合起来解决「工具行被 step 折叠行收起后看不见图」：折叠行属 ui-chat
  *      （`shadows-shipped-ui`），插件不该去改宿主的默认折叠行为，只旁路。
  *
+ * 行头（T8）按宿主 `ui-tool` 的 `ToolRow` **照抄口径**，不 import 它的 primitives：
+ *   - 展开态走 slot owner 给的 `useDisclosure()`（与宿主行同一套 turn 级折叠状态），
+ *     而不是组件自己的 state —— 否则「收起整个回合」时我们的行不会跟着复位；
+ *   - hover 是**文字色变**（`--dsw-alias-label-tertiary` → `--dsw-alias-label-primary`），
+ *     不是底色块；标题字重 400；标题与摘要之间是 2×2 的分隔点；
+ *   - 展开体末尾在 `inspect` 存在时给一个**悬停浮现**的胶囊按钮（跳轨迹视图）；
+ *   - 需要 :hover / :focus-visible 的规则只能进组件自带的一段 `<style>`（内联样式表达不了），
+ *     类名一律 `dsh-diagram-` 前缀，颜色只用 `--dsw-alias-*` token、字号走
+ *     `--dsh-content-font-size-secondary`（跟随用户的字号偏好）。
+ *
  * 数据来源只有「原始调用参数 + 结果内容 + 失败状态 + 持久 meta」——与官方口径一致
  * （built-in Web Client 不消费宿主 presentCall/presentResult）。因此：
  *   - 零上下文开销：坐标/YAML 都不靠宿主塞进 tool result 的**文本**；
@@ -41,9 +51,10 @@ const zh = {
   failed: '渲染失败',
   detail: '详情',
   hide: '收起',
+  inspect: '查看轨迹',
   saved: '已落盘到',
   reparseFailed: '卡片无法重算布局（宿主已通过校验，这是预览侧的问题）',
-  metaMissing: '卡片读不到 YAML：文件级工具的 meta 没送达（经 run_code 嵌套调用时会这样）。请展开「详情」查看宿主返回的摘要与落盘路径。',
+  metaMissing: '卡片读不到 YAML：文件级工具的 meta 没送达（经 run_code 嵌套调用时会这样）。展开「详情」可看宿主返回的摘要与落盘路径。',
   turnTitle: '本回合架构图',
   fitWidth: '适应宽度',
   fitAll: '整图',
@@ -62,6 +73,7 @@ const en = {
   failed: 'Render failed',
   detail: 'Details',
   hide: 'Hide',
+  inspect: 'Inspect',
   saved: 'Saved to',
   reparseFailed: 'The card could not re-derive the layout (the host validated it; this is a preview-side problem)',
   metaMissing: 'The card cannot read the YAML: the file-tool meta did not reach the client (this happens for run_code sub-calls). Expand Details for the host summary and saved path.',
@@ -76,6 +88,51 @@ const en = {
 }
 
 type Dict = typeof zh
+
+/**
+ * 行头样式。
+ *
+ * 只能放这里的原因：`:hover` / `:focus-visible` 表达不进内联样式。类名全部 `dsh-diagram-`
+ * 前缀（不与宿主或别的插件撞名），颜色只走 `--dsw-alias-*` token。这段样式随组件
+ * 挂载/卸载，不残留。
+ */
+const CARD_CSS = `
+.dsh-diagram-card { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); }
+.dsh-diagram-row { display: flex; align-items: center; min-height: 24px; border-radius: 6px; }
+.dsh-diagram-row[data-expandable="true"] { cursor: pointer; }
+.dsh-diagram-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+.dsh-diagram-leading { display: inline-flex; align-items: center; justify-content: center; width: 16px; flex: 0 0 16px; }
+.dsh-diagram-dot { width: 8px; height: 8px; border-radius: 50%; }
+.dsh-diagram-title { font-size: 13px; font-weight: 400; color: var(--dsw-alias-label-primary);
+  transition: color 100ms ease; white-space: nowrap; }
+.dsh-diagram-sep { flex: none; width: 2px; height: 2px; border-radius: 1px; margin: 0 8px;
+  background: var(--dsw-alias-label-caption); }
+.dsh-diagram-summary { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--dsh-content-font-size-secondary, 13px); line-height: 24px;
+  color: var(--dsw-alias-label-tertiary); transition: color 100ms ease; }
+.dsh-diagram-status { flex: none; margin-left: 8px; font-size: var(--dsh-content-font-size-secondary, 13px); }
+.dsh-diagram-chevron { flex: none; display: inline-flex; margin-left: 8px; color: var(--dsw-alias-label-secondary);
+  transition: transform 120ms ease; }
+.dsh-diagram-chevron[data-open="true"] { transform: rotate(90deg); }
+.dsh-diagram-row:hover .dsh-diagram-summary { color: var(--dsw-alias-label-primary); }
+.dsh-diagram-body { font-family: var(--ds-font-family-code, ui-monospace, Menlo, Consolas, monospace);
+  font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+  color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; padding: 8px 10px; margin: 0;
+  max-height: 260px; overflow: auto; }
+.dsh-diagram-note { font-size: var(--dsh-content-font-size-secondary, 13px); color: var(--dsw-alias-label-tertiary); }
+.dsh-diagram-saved { font-family: var(--ds-font-family-code, ui-monospace, Menlo, Consolas, monospace); font-size: 11px;
+  color: var(--dsw-alias-label-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-diagram-inspect { display: inline-flex; align-self: flex-start; align-items: center; gap: 4px;
+  margin: 2px 0 0 4px; padding: 2px 8px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 999px;
+  background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-secondary);
+  font-size: 11px; line-height: 16px; cursor: pointer; opacity: 0; transition: opacity 100ms ease; }
+.dsh-diagram-card:hover .dsh-diagram-inspect, .dsh-diagram-inspect:focus-visible { opacity: 1; }
+.dsh-diagram-inspect:hover { background: var(--dsw-alias-interactive-bg-hover-solid); color: var(--dsw-alias-label-primary); }
+.dsh-diagram-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; }
+`
 
 /** 一次调用的冻结切片，全部由 block 派生（replay 稳定，不依赖宿主状态）。 */
 interface CallSlice {
@@ -131,7 +188,7 @@ function readSlice(block: {
     }
   }
 
-  // 文件级工具的参数里只有 path —— YAML 只能从 meta 走（见 packages/schema/src/browser.ts 与宿主 files.ts）。
+  // 文件级工具的参数里只有 path —— YAML 只能从 meta 走（见宿主 files.ts）。
   const meta = settled ? asRecord(block.meta) : undefined
   const yamlSpec = argsYaml !== ''
     ? argsYaml
@@ -146,86 +203,51 @@ function readSlice(block: {
   return { argsRaw, yamlSpec, title, result, savedPath, isError, state }
 }
 
-const styles = {
-  row: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '8px',
-    padding: '10px 12px',
-    border: '1px solid var(--dsw-alias-border-l1)',
-    borderRadius: '10px',
-    background: 'var(--dsw-alias-bg-layer-1)',
-  },
-  head: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    fontSize: '13px',
-    color: 'var(--dsw-alias-label-primary)',
-  },
-  dot: { width: '8px', height: '8px', borderRadius: '50%', flex: '0 0 auto' },
-  name: { fontWeight: 600, flex: '0 0 auto' },
-  summary: {
-    flex: '1 1 auto',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap' as const,
-    color: 'var(--dsw-alias-label-secondary)',
-    fontSize: '12px',
-  },
-  status: { flex: '0 0 auto', fontSize: '12px' },
-  toggle: {
-    flex: '0 0 auto',
-    border: 'none',
-    background: 'transparent',
-    color: 'var(--dsw-alias-label-secondary)',
-    cursor: 'pointer',
-    fontSize: '12px',
-    padding: '2px 4px',
-  },
-  body: {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-    fontSize: '12px',
-    lineHeight: 1.6,
-    whiteSpace: 'pre-wrap' as const,
-    wordBreak: 'break-word' as const,
-    color: 'var(--dsw-alias-label-secondary)',
-    background: 'var(--dsw-alias-bg-layer-2)',
-    border: '1px solid var(--dsw-alias-border-l1)',
-    borderRadius: '8px',
-    padding: '8px 10px',
-    margin: 0,
-    maxHeight: '260px',
-    overflow: 'auto',
-  },
-  note: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' },
-  saved: {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-    fontSize: '11px',
-    color: 'var(--dsw-alias-label-secondary)',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap' as const,
-  },
-}
-
-/** 状态点颜色：语义色走主题 token，不写死。 */
+/** 状态色：语义色走主题 token，不写死。 */
 function stateColor(state: CallSlice['state']): string {
   if (state === 'error') return 'var(--dsw-alias-state-error-primary)'
   if (state === 'ok') return 'var(--dsw-alias-state-success-primary)'
   return 'var(--dsw-alias-state-idle-primary)'
 }
 
-/** 卡片主体。props 由 slot 运行时给出（ToolCallOwnerProps）。 */
+/**
+ * 兜底展开态（正常路径用不到）。
+ *
+ * 之所以单独成函数：`useDisclosure` 是 Hook，必须在组件顶层无条件、按同一顺序调用，
+ * 所以「有没有 owner 给的 Hook」不能变成条件 Hook，只能换一个同形的函数传进去。
+ * @returns 与宿主行同形的展开态。
+ */
+function useLocalDisclosure(): { expanded: boolean; toggle: () => void } {
+  const [expanded, setExpanded] = useState(false)
+  return { expanded, toggle: () => setExpanded((value) => !value) }
+}
+
+/** 展开箭头（宿主行同款语义：展开时旋转 90°）。 */
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <span className="dsh-diagram-chevron" data-open={open ? 'true' : 'false'} aria-hidden>
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"
+        strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4.5 2.5 L8 6 L4.5 9.5" />
+      </svg>
+    </span>
+  )
+}
+
+/** 卡片主体。props 由 slot 运行时给出（ToolCallOwnerProps 的子集）。 */
 function DiagramCard(props: {
   callId?: string
   toolName?: string
   block: Parameters<typeof readSlice>[0]
+  /** 宿主行的折叠 Hook（turn 级；收起整个回合时一并复位） */
+  useDisclosure: () => { expanded: boolean; toggle: () => void }
+  /** 跳轨迹视图；缺省表示该视图不可用 */
+  inspect?: () => void
   t: (key: keyof Dict) => string
 }) {
-  const { callId, block, t } = props
+  const { callId, block, t, inspect } = props
   const slice = readSlice(block)
-  const [open, setOpen] = useState(false)
+  const { expanded, toggle } = props.useDisclosure()
   const { model, error: modelError } = useDiagramModel(slice.yamlSpec, slice.title)
 
   const onDownload = useCallback(() => {
@@ -253,23 +275,46 @@ function DiagramCard(props: {
     : `${model.layout.nodes.length} ${t('unit')} · ${model.layout.edges.length} ${t('link')}`
   const summary = [counts, slice.title !== '' ? slice.title : model?.title ?? ''].filter((part) => part !== '').join(' · ')
   const details = slice.result ?? slice.argsRaw ?? ''
+  const expandable = details !== ''
   // 只要客户端能重算出布局就出图：`save_drawio` 被沙箱拒绝这类失败里图本身是好的，
   // 应该「出图 + 把错误摆在下面」，而不是整行只剩错误文本。
   const canRender = model !== null
   const metaMissing = slice.state !== 'preparing' && slice.state !== 'error' && slice.yamlSpec === ''
+  const open = expanded && expandable
 
   return (
-    <div style={styles.row} data-dsh-diagram-card={props.toolName ?? 'render_architecture'}>
-      <div style={styles.head}>
-        <span style={{ ...styles.dot, background: stateColor(slice.state) }} aria-hidden />
-        <span style={styles.name}>{t('title')}</span>
-        <span style={styles.summary}>{summary === '' ? statusText : summary}</span>
-        <span style={{ ...styles.status, color: stateColor(slice.state) }}>{statusText}</span>
-        {details !== '' && (
-          <button type="button" style={styles.toggle} onClick={() => setOpen((value) => !value)}>
-            {open ? t('hide') : t('detail')}
-          </button>
-        )}
+    <div
+      className="dsh-diagram-card"
+      data-dsh-diagram-card={props.toolName ?? 'render_architecture'}
+      data-state={slice.state}
+    >
+      <style>{CARD_CSS}</style>
+      <span className="dsh-diagram-visually-hidden">{statusText}</span>
+
+      <div
+        className="dsh-diagram-row"
+        data-expandable={expandable ? 'true' : 'false'}
+        role={expandable ? 'button' : undefined}
+        tabIndex={expandable ? 0 : undefined}
+        aria-expanded={expandable ? open : undefined}
+        onClick={expandable ? toggle : undefined}
+        onKeyDown={expandable
+          ? (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              toggle()
+            }
+          }
+          : undefined}
+      >
+        <span className="dsh-diagram-leading">
+          <span className="dsh-diagram-dot" style={{ background: stateColor(slice.state) }} aria-hidden />
+        </span>
+        <span className="dsh-diagram-title">{t('title')}</span>
+        <span className="dsh-diagram-sep" aria-hidden />
+        <span className="dsh-diagram-summary">{summary === '' ? statusText : summary}</span>
+        <span className="dsh-diagram-status" style={{ color: stateColor(slice.state) }}>{statusText}</span>
+        {expandable && <Chevron open={open} />}
       </div>
 
       {canRender && (
@@ -283,26 +328,37 @@ function DiagramCard(props: {
       )}
 
       {slice.savedPath !== null && (
-        <div style={styles.saved} title={slice.savedPath}>{t('saved')} {slice.savedPath}</div>
+        <div className="dsh-diagram-saved" title={slice.savedPath}>{t('saved')} {slice.savedPath}</div>
       )}
 
       {slice.state === 'error' && (
-        <pre style={{ ...styles.body, color: 'var(--dsw-alias-state-error-primary)' }}>{slice.result ?? ''}</pre>
+        <pre className="dsh-diagram-body" style={{ color: 'var(--dsw-alias-state-error-primary)' }}>
+          {slice.result ?? ''}
+        </pre>
       )}
 
-      {metaMissing && <div style={styles.note}>{t('metaMissing')}</div>}
+      {metaMissing && <div className="dsh-diagram-note">{t('metaMissing')}</div>}
 
       {modelError !== null && (
-        <div style={styles.note}>
-          {t('reparseFailed')}: {modelError}
-        </div>
+        <div className="dsh-diagram-note">{t('reparseFailed')}: {modelError}</div>
       )}
 
       {slice.state !== 'error' && model === null && modelError === null && !metaMissing && (
-        <div style={styles.note}>{statusText}</div>
+        <div className="dsh-diagram-note">{statusText}</div>
       )}
 
-      {open && details !== '' && <pre style={styles.body}>{details}</pre>}
+      {open && details !== '' && <pre className="dsh-diagram-body">{details}</pre>}
+
+      {inspect !== undefined && (
+        <button type="button" className="dsh-diagram-inspect" onClick={inspect}>
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3"
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <circle cx="6" cy="6" r="4.2" />
+            <path d="M6 3.4 V6 L7.8 7.2" />
+          </svg>
+          {t('inspect')}
+        </button>
+      )}
     </div>
   )
 }
@@ -363,8 +419,6 @@ function previewLabels(t: (key: keyof Dict) => string) {
  * 而 `dsh.client.inject` 那份顺序清单是**宿主启动时**读取的，改它又要重启。
  * 运行时注入与顺序无关，服务出现才注册、消失就释放 —— 也是 practices 文档推荐的可选依赖写法。
  *
- * 注：`dsh-univer-office` 为更老的 DSH 保留了 `select` 形态的降级分支；本机槽位目录里
- * list 槽要的是 `id`，没有 `select`，所以这里不写那条分支（写了也是死代码）。
  * @param ctx - 客户端上下文。
  * @param t - 已绑定命名空间的翻译函数。
  */
@@ -400,8 +454,23 @@ export default {
       for (const key of TOOL_NAMES) {
         yield ctx.slots.register(
           { name: 'tool.call.toolview', key, locale: NS },
-          (props: { callId?: string; toolName?: string; block: Parameters<typeof readSlice>[0] }) =>
-            <DiagramCard {...props} t={t} />,
+          (props: {
+            callId?: string
+            toolName?: string
+            block: Parameters<typeof readSlice>[0]
+            useDisclosure?: () => { expanded: boolean; toggle: () => void }
+            inspect?: () => void
+          }) => (
+            <DiagramCard
+              callId={props.callId}
+              toolName={props.toolName}
+              block={props.block}
+              // 契约里 useDisclosure 是必备项；真缺了也不让卡片崩掉，退回本地展开态。
+              useDisclosure={props.useDisclosure ?? useLocalDisclosure}
+              inspect={props.inspect}
+              t={t}
+            />
+          ),
         )
       }
     })
