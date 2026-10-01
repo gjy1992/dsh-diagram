@@ -1,11 +1,16 @@
 /**
  * dsh-diagram · 宿主半（可安装 bundle 的 node 侧）。
  *
- * 只做一件事：把 Phase 1 的 `renderArchitecture()` 包装成 dsh 的 `render_architecture` Tool。
+ * 注册三个工具，语义刻意分开（详见 PLAN.md §Phase 2）：
+ *  - `render_architecture`：**模型内联写 YAML** 的通道（本文件）；
+ *  - `yaml_to_drawio` / `drawio_to_yaml`：**文件级**双向工具对（`./tools/files.ts`），
+ *    服务「用户手改文件 → 看效果 / 交回 AI」的闭环，也是 `layout` 三个旋钮的用户通道。
  *
+ * 共同约定：
  * - 校验失败：抛出 message 里带结构化诊断的 Error —— 模型看到的是 `Error: ValidationError: …`，
- *   可直接据此修正 `yaml_spec` 重试，这就是 PRD §4.3 要的自愈闭环。
- * - 成功：只回一行统计摘要（+ 可选落盘路径）。draw.io XML 留在宿主，不进模型上下文。
+ *   可直接据此修正重试，这就是 PRD §4.3 要的自愈闭环。
+ * - 成功：只回一行统计摘要（+ 可选落盘路径）。draw.io XML 留在宿主，不进模型上下文；
+ *   需要给卡片的数据走 `output.presentationMeta`（落在 `tool/result.meta`，同样不进模型上下文）。
  *
  * 依赖说明：`@deepseek-ai/dsh-tools` 是 dsh 自带包，随 dsh 安装解析，本包不声明依赖；
  * `@dsh-diagram/*` 在打包时被 esbuild 内联（见 scripts/build-plugin.mjs）。
@@ -13,6 +18,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { renderArchitecture, type Diagnostic } from '@dsh-diagram/core'
+import { createDrawioToYaml, createYamlToDrawio } from './tools/files'
 
 /** 需要的宿主服务：工具注册表。文件系统只在 save_drawio 时按需读取。 */
 export const inject = ['tools']
@@ -45,9 +51,11 @@ export const DESCRIPTION = [
  * Phase 1 的结构化诊断渲染成模型可读的文本（即 ToolError 载荷）。
  * 每条一行：`序号. 路径 [错误码] 说明 Did you mean '…'?`
  * @param diagnostics - `validateArchSpec()` 产出的诊断数组。
+ * @param subject - 首行里「哪里有问题」：内联工具是 `yaml_spec`，文件级工具传文件路径。
+ *   必须区分，否则文件级调用会看到「yaml_spec 中有 N 处问题」却找不到那个 yaml_spec。
  * @returns 抛进 Error.message 的完整文本。
  */
-export function formatDiagnostics(diagnostics: readonly Diagnostic[]): string {
+export function formatDiagnostics(diagnostics: readonly Diagnostic[], subject = 'yaml_spec'): string {
   const shown = diagnostics.slice(0, MAX_DIAGNOSTICS)
   const lines = shown.map((d, index) => {
     const hint = d.hint === undefined ? '' : ` Did you mean '${d.hint}'?`
@@ -56,7 +64,7 @@ export function formatDiagnostics(diagnostics: readonly Diagnostic[]): string {
   const hidden = diagnostics.length - shown.length
   if (hidden > 0) lines.push(`… 另有 ${hidden} 处问题未列出。`)
   return [
-    `ValidationError: yaml_spec 中有 ${diagnostics.length} 处问题，请修正后重新调用本工具。`,
+    `ValidationError: ${subject} 中有 ${diagnostics.length} 处问题，请修正后重新调用本工具。`,
     '',
     ...lines,
   ].join('\n')
@@ -116,7 +124,7 @@ async function saveDrawio(
 }
 
 /**
- * 注册 `render_architecture`。注册即生效 —— 注册表会把 schema 喂给 system prompt 装配。
+ * 注册 `render_architecture` 与文件级工具对。注册即生效 —— 注册表会把 schema 喂给 system prompt 装配。
  * @param ctx - 插件上下文（`inject: ['tools']` 保证 ctx.tools 存在）。
  */
 export function apply(ctx: Context): void {
@@ -182,4 +190,10 @@ export function apply(ctx: Context): void {
       return value
     },
   }))
+
+  // 文件级双向工具对（PLAN.md §P2.7）：入参是路径，服务「用户手改文件 → 看效果 / 交回 AI」。
+  // `formatDiagnostics` 以依赖注入的方式传下去，避免 host.ts ↔ tools/files.ts 形成循环 import。
+  const fileToolDeps = { formatDiagnostics }
+  ctx.tools.register(createYamlToDrawio(ctx, fileToolDeps))
+  ctx.tools.register(createDrawioToYaml(ctx, fileToolDeps))
 }

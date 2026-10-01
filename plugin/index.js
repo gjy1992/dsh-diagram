@@ -6878,7 +6878,7 @@ var require_ajv = __commonJS({
 });
 
 // plugin/src/host.ts
-import { defineTool } from "@deepseek-ai/dsh-tools";
+import { defineTool as defineTool2 } from "@deepseek-ai/dsh-tools";
 
 // packages/drawio/src/style-map.ts
 var NODE_THEME = {
@@ -10313,75 +10313,86 @@ function toDiagnostic(error) {
     message
   };
 }
-function validateArchSpec(source) {
-  let raw = source;
-  if (typeof source === "string") {
-    const parsed = parseYaml(source);
-    if (!parsed.ok) {
-      return { ok: false, diagnostics: parsed.diagnostics };
-    }
-    raw = parsed.value;
-  }
-  if (!ensureSchemaValid(raw)) {
-    const diagnostics2 = (ensureSchemaValid.errors ?? []).map(toDiagnostic);
-    return { ok: false, diagnostics: diagnostics2 };
-  }
-  const ast = raw;
+function asId(value) {
+  return typeof value === "string" && value.length > 0 ? value : void 0;
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+function refViewOf(raw) {
+  const root = isRecord(raw) ? raw : {};
+  const groups = Array.isArray(root.groups) ? root.groups : [];
+  const nodes = Array.isArray(root.nodes) ? root.nodes : [];
+  const edges = Array.isArray(root.edges) ? root.edges : [];
+  const read = (item, key) => isRecord(item) ? asId(item[key]) : void 0;
+  return {
+    groupIds: groups.map((item) => read(item, "id")),
+    groupParents: groups.map((item) => read(item, "parent")),
+    nodeIds: nodes.map((item) => read(item, "id")),
+    nodeGroups: nodes.map((item) => read(item, "group")),
+    edges: edges.map((item, index) => ({ index, from: read(item, "from"), to: read(item, "to") }))
+  };
+}
+function collectReferenceDiagnostics(view) {
   const diagnostics = [];
-  const spec = normalizeSpec(ast);
-  const groupIds = spec.groups.map((group) => group.id);
-  const nodeIds = spec.nodes.map((node) => node.id);
+  const groupIds = view.groupIds.filter((id) => id !== void 0);
+  const nodeIds = view.nodeIds.filter((id) => id !== void 0);
   const groupIdSet = new Set(groupIds);
-  reportDuplicates(groupIds, "groups", diagnostics);
-  reportDuplicates(nodeIds, "nodes", diagnostics);
-  for (const node of spec.nodes) {
-    if (groupIdSet.has(node.id)) {
+  const nodeIdSet = new Set(nodeIds);
+  reportDuplicates(view.groupIds, "groups", diagnostics);
+  reportDuplicates(view.nodeIds, "nodes", diagnostics);
+  for (const [index, id] of view.nodeIds.entries()) {
+    if (id !== void 0 && groupIdSet.has(id)) {
       diagnostics.push({
         code: "ID_CONFLICT",
-        path: `nodes[${nodeIds.indexOf(node.id)}].id`,
-        message: `node id '${node.id}' conflicts with a group id; ids must be unique across nodes and groups.`
+        path: `nodes[${index}].id`,
+        message: `node id '${id}' conflicts with a group id; ids must be unique across nodes and groups.`
       });
     }
   }
-  for (const [index, node] of spec.nodes.entries()) {
-    if (node.group !== void 0 && !groupIdSet.has(node.group)) {
+  for (const [index, group] of view.nodeGroups.entries()) {
+    const nodeId = view.nodeIds[index];
+    if (group === void 0 || nodeId === void 0) continue;
+    if (!groupIdSet.has(group)) {
       diagnostics.push({
         code: "NODE_GROUP_UNKNOWN",
         path: `nodes[${index}].group`,
-        message: `group '${node.group}' referenced by node '${node.id}' is not defined in groups list.`,
-        hint: suggestId(node.group, groupIds)
+        message: `group '${group}' referenced by node '${nodeId}' is not defined in groups list.`,
+        hint: suggestId(group, groupIds)
       });
     }
   }
-  for (const [index, edge] of spec.edges.entries()) {
-    if (!nodeIds.includes(edge.from)) {
+  for (const edge of view.edges) {
+    if (edge.from !== void 0 && !nodeIdSet.has(edge.from)) {
       diagnostics.push({
         code: "EDGE_SOURCE_UNKNOWN",
-        path: `edges[${index}].from`,
+        path: `edges[${edge.index}].from`,
         message: `edge source '${edge.from}' is not defined in nodes list.`,
         hint: suggestId(edge.from, nodeIds)
       });
     }
-    if (!nodeIds.includes(edge.to)) {
+    if (edge.to !== void 0 && !nodeIdSet.has(edge.to)) {
       diagnostics.push({
         code: "EDGE_TARGET_UNKNOWN",
-        path: `edges[${index}].to`,
+        path: `edges[${edge.index}].to`,
         message: `edge target '${edge.to}' is not defined in nodes list.`,
         hint: suggestId(edge.to, nodeIds)
       });
     }
   }
-  const groupById = new Map(spec.groups.map((group) => [group.id, group]));
-  for (const [index, group] of spec.groups.entries()) {
-    const parentId = group.parent;
-    if (parentId === void 0) {
-      continue;
-    }
-    if (parentId === group.id) {
+  const parentById = /* @__PURE__ */ new Map();
+  for (const [index, id] of view.groupIds.entries()) {
+    if (id !== void 0) parentById.set(id, view.groupParents[index]);
+  }
+  for (const [index, id] of view.groupIds.entries()) {
+    if (id === void 0) continue;
+    const parentId = view.groupParents[index];
+    if (parentId === void 0) continue;
+    if (parentId === id) {
       diagnostics.push({
         code: "GROUP_SELF_PARENT",
         path: `groups[${index}].parent`,
-        message: `group '${group.id}' cannot be its own parent.`
+        message: `group '${id}' cannot be its own parent.`
       });
       continue;
     }
@@ -10389,12 +10400,12 @@ function validateArchSpec(source) {
       diagnostics.push({
         code: "GROUP_PARENT_UNKNOWN",
         path: `groups[${index}].parent`,
-        message: `parent group '${parentId}' referenced by group '${group.id}' is not defined in groups list.`,
+        message: `parent group '${parentId}' referenced by group '${id}' is not defined in groups list.`,
         hint: suggestId(parentId, groupIds)
       });
       continue;
     }
-    const chain = [group.id];
+    const chain = [id];
     let cursor = parentId;
     while (cursor !== void 0) {
       if (chain.includes(cursor)) {
@@ -10406,16 +10417,35 @@ function validateArchSpec(source) {
         break;
       }
       chain.push(cursor);
-      cursor = groupById.get(cursor)?.parent;
+      cursor = parentById.get(cursor);
     }
     if (chain.length > MAX_GROUP_LEVELS) {
       diagnostics.push({
         code: "GROUP_DEPTH_EXCEEDED",
         path: `groups[${index}].parent`,
-        message: `group '${group.id}' is nested ${chain.length} levels deep, which exceeds the maximum of ${MAX_GROUP_LEVELS}.`
+        message: `group '${id}' is nested ${chain.length} levels deep, which exceeds the maximum of ${MAX_GROUP_LEVELS}.`
       });
     }
   }
+  return diagnostics;
+}
+function validateArchSpec(source) {
+  let raw = source;
+  if (typeof source === "string") {
+    const parsed = parseYaml(source);
+    if (!parsed.ok) {
+      return { ok: false, diagnostics: parsed.diagnostics };
+    }
+    raw = parsed.value;
+  }
+  if (!ensureSchemaValid(raw)) {
+    const diagnostics2 = (ensureSchemaValid.errors ?? []).map(toDiagnostic);
+    diagnostics2.push(...collectReferenceDiagnostics(refViewOf(raw)));
+    return { ok: false, diagnostics: diagnostics2 };
+  }
+  const ast = raw;
+  const spec = normalizeSpec(ast);
+  const diagnostics = collectReferenceDiagnostics(refViewOf(spec));
   if (diagnostics.length > 0) {
     return { ok: false, diagnostics };
   }
@@ -10424,6 +10454,7 @@ function validateArchSpec(source) {
 function reportDuplicates(ids, collection, diagnostics) {
   const seen = /* @__PURE__ */ new Set();
   for (const [index, id] of ids.entries()) {
+    if (id === void 0) continue;
     if (seen.has(id)) {
       diagnostics.push({
         code: "ID_DUPLICATE",
@@ -12007,6 +12038,394 @@ function buildDrawio(input) {
   };
 }
 
+// packages/drawio/src/parse-drawio.ts
+var CompressedDiagramError = class extends Error {
+  /** `<diagram>` 的原始（base64）内容，宿主可直接拿去 decompress。 */
+  payload;
+  constructor(payload) {
+    super(
+      "\u8BE5 .drawio \u7684 <diagram> \u662F draw.io \u7684\u538B\u7F29\u683C\u5F0F\uFF08decodeURIComponent + deflateRaw + base64\uFF09\uFF0C\u65E0\u6CD5\u6309\u660E\u6587\u89E3\u6790\u3002\u8BF7\u7528 draw.io \u53E6\u5B58\u4E3A\u300C\u672A\u538B\u7F29 XML\u300D\uFF0C\u6216\u8BA9\u5BBF\u4E3B\u6CE8\u5165\u89E3\u538B\u5668\u540E\u91CD\u8BD5\u3002"
+    );
+    this.name = "CompressedDiagramError";
+    this.payload = payload;
+  }
+};
+function parseDrawio(xml, decodeCompressed) {
+  const warnings = [];
+  const diagram = readElement(xml, "diagram");
+  let modelSource = xml;
+  let diagramName = "";
+  if (diagram !== void 0) {
+    const pages = (xml.match(/<diagram(?=[\s/>])/gi) ?? []).length;
+    if (pages > 1) {
+      warnings.push(`\u6587\u4EF6\u91CC\u6709 ${pages} \u4E2A <diagram> \u9875\uFF0C\u53EA\u53CD\u89E3\u4E86\u7B2C\u4E00\u9875\u3002`);
+    }
+    if (diagram.attributes.has("name")) {
+      diagramName = diagram.attributes.get("name") ?? "";
+    }
+    const inner = diagram.inner.trim();
+    if (inner !== "" && !/^<mxGraphModel(?=[\s/>])/i.test(inner)) {
+      if (decodeCompressed === void 0) throw new CompressedDiagramError(inner);
+      const nested = parseDrawio(decodeCompressed(inner), decodeCompressed);
+      const spec2 = diagramName === "" || nested.spec.meta?.title !== void 0 ? nested.spec : { ...nested.spec, meta: { ...nested.spec.meta, title: diagramName } };
+      return {
+        spec: spec2,
+        yamlSpec: emitYaml(spec2),
+        warnings: [
+          ...warnings,
+          "\u8BE5 .drawio \u7684 <diagram> \u662F draw.io \u7684\u538B\u7F29\u683C\u5F0F\uFF0C\u5DF2\u81EA\u52A8\u89E3\u538B\u540E\u89E3\u6790\u3002",
+          ...nested.warnings
+        ]
+      };
+    }
+    if (inner !== "") modelSource = inner;
+  }
+  const model = readElement(modelSource, "mxGraphModel");
+  if (model === void 0) {
+    throw new Error(
+      "\u4E0D\u662F\u53EF\u8BC6\u522B\u7684 draw.io \u6587\u4EF6\uFF1A\u627E\u4E0D\u5230 <mxGraphModel> \u5143\u7D20\u3002\u8BF7\u786E\u8BA4\u8FD9\u662F\u672A\u538B\u7F29\u7684\u660E\u6587\u5BFC\u51FA\u7248\u672C\uFF08draw.io \u9ED8\u8BA4\u300C\u538B\u7F29\u300D\u4FDD\u5B58\u7684 diagram \u9700\u8981\u89E3\u538B\u5668\uFF09\u3002"
+    );
+  }
+  const classified = readCells(model.inner).map((cell) => {
+    const style = readStyle(cell.style);
+    return { cell, style, kind: classify(cell, style) };
+  });
+  const groupIds = new Set(
+    classified.filter((entry) => entry.kind === "group").map((entry) => entry.cell.id)
+  );
+  const groups = [];
+  const nodes = [];
+  const edges = [];
+  let droppedGeometry = 0;
+  for (const entry of classified) {
+    const { cell, style, kind } = entry;
+    if (cell.id === "" || cell.id === "0" || cell.id === "1") continue;
+    if (kind === "unknown") {
+      warnings.push(`cell '${cell.id}' \u65E2\u6CA1\u6709 vertex \u4E5F\u6CA1\u6709 edge\uFF08\u4E0D\u662F\u53EF\u6E32\u67D3\u7684\u56FE\u5F62\uFF09\uFF0C\u5DF2\u5FFD\u7565\u3002`);
+      continue;
+    }
+    droppedGeometry += 1;
+    if (kind === "group") {
+      const resolved2 = groupVariantOf(style);
+      if (resolved2.warning !== void 0) warnings.push(`\u5206\u7EC4 '${cell.id}'\uFF1A${resolved2.warning}`);
+      const parent = cell.parent === "" || cell.parent === "0" || cell.parent === "1" ? void 0 : cell.parent;
+      if (parent !== void 0 && !groupIds.has(parent)) {
+        warnings.push(`\u5206\u7EC4 '${cell.id}' \u7684 parent '${parent}' \u4E0D\u5728\u672C\u6587\u4EF6\u4E2D\uFF0C\u5DF2\u6309\u9876\u5C42\u5206\u7EC4\u5904\u7406\u3002`);
+      }
+      const title = decodeEntities(cell.value).trim();
+      if (title === "") {
+        warnings.push(`\u5206\u7EC4 '${cell.id}' \u7684\u6807\u9898\u4E3A\u7A7A\uFF0Ctitle \u5DF2\u56DE\u843D\u4E3A id\u3002`);
+      }
+      groups.push({
+        id: cell.id,
+        title: title === "" ? cell.id : title,
+        ...resolved2.variant === "dashed" ? {} : { variant: resolved2.variant },
+        ...parent !== void 0 && groupIds.has(parent) ? { parent } : {}
+      });
+      continue;
+    }
+    if (kind === "node") {
+      const foreign = !style.has("fillColor") && !style.has("strokeColor") && !/<b>/i.test(cell.value);
+      let variant = "default";
+      if (foreign) {
+        warnings.push(
+          `\u9876\u70B9 '${cell.id}' \u770B\u8D77\u6765\u4E0D\u662F\u672C\u5DE5\u5177\u5BFC\u51FA\u7684\u5361\u7247\uFF08style \u91CC\u6CA1\u6709 fillColor / strokeColor\uFF0Cvalue \u91CC\u4E5F\u6CA1\u6709 <b> \u6807\u9898\uFF09\uFF1A\u5DF2\u6309\u666E\u901A\u8282\u70B9\u6536\u4E0B\uFF08title \u53D6\u7EAF\u6587\u672C\u3001variant=default\uFF09\uFF0C\u8BF7\u4EBA\u5DE5\u786E\u8BA4\u662F\u5426\u4FDD\u7559\u3002`
+        );
+      } else {
+        const resolved2 = nodeVariantOf(style);
+        variant = resolved2.variant;
+        if (resolved2.warning !== void 0) warnings.push(`\u8282\u70B9 '${cell.id}'\uFF1A${resolved2.warning}`);
+      }
+      const label = parseNodeValue(cell.value);
+      if (!foreign) {
+        for (const warning of label.warnings) warnings.push(`\u8282\u70B9 '${cell.id}'\uFF1A${warning}`);
+      }
+      const group = cell.parent === "" || cell.parent === "0" || cell.parent === "1" ? void 0 : cell.parent;
+      if (group !== void 0 && !groupIds.has(group)) {
+        warnings.push(`\u8282\u70B9 '${cell.id}' \u7684 parent '${group}' \u4E0D\u662F\u5206\u7EC4\uFF0C\u5DF2\u7F6E\u4E8E\u6839\u753B\u5E03\u3002`);
+      }
+      if (label.title === "") {
+        warnings.push(`\u8282\u70B9 '${cell.id}' \u7684\u5361\u7247\u6587\u672C\u4E3A\u7A7A\uFF0Ctitle \u5DF2\u56DE\u843D\u4E3A id\u3002`);
+      }
+      nodes.push({
+        id: cell.id,
+        title: label.title === "" ? cell.id : label.title,
+        ...group !== void 0 && groupIds.has(group) ? { group } : {},
+        ...label.desc === void 0 || label.desc === "" ? {} : { desc: label.desc },
+        ...variant === "default" ? {} : { variant },
+        ...label.items.length === 0 ? {} : { items: label.items }
+      });
+      continue;
+    }
+    const resolved = edgeStyleOf(style);
+    if (resolved.warning !== void 0) warnings.push(`\u8FDE\u7EBF '${cell.id}'\uFF1A${resolved.warning}`);
+    if (cell.source === void 0 || cell.target === void 0) {
+      warnings.push(
+        `\u8FDE\u7EBF '${cell.id}' \u7F3A\u5C11 source / target\uFF08\u53EF\u80FD\u662F\u624B\u5DE5\u753B\u7684\u6D6E\u52A8\u8FDE\u7EBF\uFF09\uFF0C\u5DF2\u5FFD\u7565\u3002`
+      );
+      droppedGeometry -= 1;
+      continue;
+    }
+    edges.push({
+      from: cell.source,
+      to: cell.target,
+      ...cell.value === "" ? {} : { label: cell.value },
+      ...resolved.style === "solid" ? {} : { style: resolved.style }
+    });
+  }
+  if (droppedGeometry > 0) {
+    warnings.push(
+      `\u5DF2\u4E22\u5F03 ${droppedGeometry} \u4E2A cell \u7684\u51E0\u4F55\u5750\u6807\uFF08x / y / width / height\uFF09\uFF1ADSL \u4E0D\u542B\u5750\u6807\uFF0C\u91CD\u65B0\u6E32\u67D3\u65F6\u7531\u5E03\u5C40\u5F15\u64CE\u91CD\u6392\u3002`
+    );
+  }
+  warnings.push(
+    "layout \u4E09\u9879\uFF08direction / inner_direction / max_columns\uFF09\u4E0D\u5199\u5728 .drawio \u91CC\uFF0C\u672A\u8FD8\u539F\uFF1B\u9700\u8981\u65F6\u8BF7\u624B\u5DE5\u8865\u5199\u3002"
+  );
+  if (nodes.length === 0) {
+    throw new Error("\u53CD\u89E3\u5931\u8D25\uFF1A\u8BE5\u6587\u4EF6\u91CC\u6CA1\u6709\u4EFB\u4F55\u8282\u70B9 cell\uFF0C\u65E0\u6CD5\u4EA7\u51FA\u53EF\u6E32\u67D3\u7684 YAML\u3002");
+  }
+  if (edges.length === 0) {
+    warnings.push("\u8BE5\u56FE\u6CA1\u6709\u4EFB\u4F55\u8FDE\u7EBF\uFF1BDSL \u8981\u6C42 edges \u81F3\u5C11 1 \u6761\uFF0C\u8865\u4E0A\u8FDE\u7EBF\u540E\u624D\u80FD\u91CD\u65B0\u6E32\u67D3\u3002");
+  }
+  const groupsOut = groups.length === 0 ? void 0 : groups;
+  const spec = {
+    version: "1.0",
+    // diagram name 就是写出侧 `spec.meta.title ?? title`，无法区分子项与文件名回落，
+    // 一律还原成 meta.title（幂等：再走一遍写出得到同一个图名）。
+    ...diagramName === "" ? {} : { meta: { title: diagramName } },
+    ...groupsOut === void 0 ? {} : { groups: groupsOut },
+    nodes,
+    edges
+  };
+  return { spec, yamlSpec: emitYaml(spec), warnings };
+}
+function classify(cell, style) {
+  if (cell.edge) return "edge";
+  if (!cell.vertex) return "unknown";
+  return style.get("container") === "1" ? "group" : "node";
+}
+function groupVariantOf(style) {
+  const dashed = style.get("dashed");
+  if (dashed === "0") return { variant: "filled" };
+  if (dashed === "1") return { variant: "dashed" };
+  const fill = style.get("fillColor");
+  if (fill !== void 0) {
+    return { variant: fill === GROUP_THEME.filled.fillColor ? "filled" : "dashed" };
+  }
+  return {
+    variant: "dashed",
+    warning: "style \u91CC\u65E2\u6CA1\u6709 dashed \u4E5F\u6CA1\u6709 fillColor\uFF0Cvariant \u5DF2\u56DE\u843D\u4E3A\u9ED8\u8BA4\u7684 dashed\u3002"
+  };
+}
+function nodeVariantOf(style) {
+  const fill = style.get("fillColor");
+  const stroke = style.get("strokeColor");
+  const font = style.get("fontColor");
+  let partial;
+  for (const variant of ["default", "primary", "danger", "warning", "muted"]) {
+    const theme = NODE_THEME[variant];
+    if (theme.fillColor !== fill || theme.strokeColor !== stroke) continue;
+    if (theme.fontColor === font) return { variant };
+    partial ??= variant;
+  }
+  if (partial !== void 0) return { variant: partial };
+  return {
+    variant: "default",
+    warning: `\u914D\u8272\u4E0D\u5728\u5F15\u64CE\u8C03\u8272\u677F\u91CC\uFF08fillColor=${fill ?? "\u672A\u8BBE\u7F6E"}\uFF09\uFF0Cvariant \u5DF2\u56DE\u843D\u4E3A default\u3002`
+  };
+}
+function edgeStyleOf(style) {
+  const startArrow = style.get("startArrow");
+  const endArrow = style.get("endArrow");
+  const hasStart = startArrow !== void 0 && startArrow !== "none" && startArrow !== "0";
+  const hasEnd = endArrow !== void 0 && endArrow !== "none" && endArrow !== "0";
+  const dashed = style.get("dashed") === "1";
+  if (hasStart) {
+    return hasEnd ? { style: "bidirectional" } : {
+      style: "bidirectional",
+      warning: "\u53EA\u6709\u8D77\u70B9\u7BAD\u5934\uFF08endArrow \u88AB\u62B9\u6389\uFF09\uFF0CDSL \u65E0\u6CD5\u8868\u8FBE\u5355\u5411\u5165\u7BAD\u5934\uFF0C\u5DF2\u6309 bidirectional \u5904\u7406\u3002"
+    };
+  }
+  if (!hasEnd) {
+    return {
+      style: dashed ? "dashed" : "solid",
+      warning: "\u4E24\u4E2A\u65B9\u5411\u90FD\u6CA1\u6709\u7BAD\u5934\uFF0CDSL \u65E0\u6B64\u5F62\u6001\uFF0C\u5DF2\u6309\u6709\u65E0 dashed \u5904\u7406\u3002"
+    };
+  }
+  return { style: dashed ? "dashed" : "solid" };
+}
+function parseNodeValue(html) {
+  const warnings = [];
+  const source = html.trim();
+  const titleMatch = /<b>([\s\S]*?)<\/b>/i.exec(source);
+  if (titleMatch === null) {
+    warnings.push(
+      "\u5361\u7247 value \u91CC\u6CA1\u6709 <b> \u6807\u9898\uFF08\u4E0D\u662F\u672C\u5DE5\u5177\u5BFC\u51FA\u7684\u683C\u5F0F\uFF0C\u6216\u6807\u9898\u88AB\u624B\u5DE5\u5220\u4E86\uFF09\uFF0C\u5DF2\u628A\u6574\u6BB5\u6587\u672C\u5F53\u4F5C title\u3002"
+    );
+    return { title: decodeEntities(stripTags(source)).trim(), items: [], warnings };
+  }
+  const title = decodeEntities(titleMatch[1] ?? "").trim();
+  const rest = source.slice(titleMatch.index + titleMatch[0].length);
+  const hrIndex = rest.search(/<hr\b/i);
+  const head = hrIndex < 0 ? rest : rest.slice(0, hrIndex);
+  const tail = hrIndex < 0 ? "" : rest.slice(hrIndex);
+  const headFonts = [...head.matchAll(/<font([^>]*)>([\s\S]*?)<\/font>/gi)];
+  let desc;
+  const items = [];
+  if (hrIndex >= 0) {
+    const chosen = headFonts.find((match) => /text-align\s*:\s*center/i.test(match[1] ?? "")) ?? headFonts[0];
+    if (chosen === void 0) {
+      const plain = decodeEntities(stripTags(head)).replace(/\s+/g, " ").trim();
+      if (plain !== "") desc = plain;
+    } else {
+      desc = decodeEntities(chosen[2] ?? "").trim();
+    }
+    const divMatch = /<div[^>]*>([\s\S]*?)<\/div>/i.exec(tail);
+    for (const chunk of (divMatch === null ? tail : divMatch[1] ?? "").split(/<br\s*\/?>/i)) {
+      const text = decodeEntities(stripTags(chunk)).trim();
+      if (text !== "") items.push(text);
+    }
+    return { ...desc === void 0 || desc === "" ? {} : { desc }, title, items, warnings };
+  }
+  if (headFonts.length === 0) {
+    const plain = decodeEntities(stripTags(head)).replace(/\s+/g, " ").trim();
+    if (plain !== "") desc = plain;
+    return { ...desc === void 0 ? {} : { desc }, title, items, warnings };
+  }
+  if (headFonts.length > 1) {
+    warnings.push("\u5361\u7247 value \u91CC\u6709\u591A\u6BB5 <font> \u4F46\u6CA1\u6709 <hr/> \u5206\u9694\u7EBF\uFF0C\u5DF2\u6309\u6BB5\u987A\u5E8F\u62C6\u6210 desc + items\u3002");
+  }
+  desc = decodeEntities(headFonts[0]?.[2] ?? "").trim();
+  for (const match of headFonts.slice(1)) {
+    const text = decodeEntities(match[2] ?? "").trim();
+    if (text !== "") items.push(text);
+  }
+  return { ...desc === "" ? {} : { desc }, title, items, warnings };
+}
+function readElement(source, name) {
+  const open = new RegExp(`<${name}(?=[\\s/>])`, "i").exec(source);
+  if (open === null) return void 0;
+  const start = open.index + open[0].length;
+  let cursor = start;
+  let quote2;
+  let closed = false;
+  while (cursor < source.length) {
+    const char = source.charAt(cursor);
+    if (quote2 !== void 0) {
+      if (char === quote2) quote2 = void 0;
+    } else if (char === '"' || char === "'") {
+      quote2 = char;
+    } else if (char === ">") {
+      closed = true;
+      break;
+    }
+    cursor += 1;
+  }
+  if (!closed) return void 0;
+  const selfClosing = source.charAt(cursor - 1) === "/";
+  const attributes = readAttributes(source.slice(start, selfClosing ? cursor - 1 : cursor));
+  if (selfClosing) return { attributes, inner: "" };
+  const close = source.toLowerCase().indexOf(`</${name.toLowerCase()}>`, cursor + 1);
+  return { attributes, inner: close < 0 ? "" : source.slice(cursor + 1, close) };
+}
+function readCells(model) {
+  const cells = [];
+  const tag = /<(\/?)([A-Za-z][\w:.-]*)((?:"[^"]*"|'[^']*'|[^>"'])*?)(\/?)>/g;
+  let match;
+  while ((match = tag.exec(model)) !== null) {
+    if (match[1] === "/" || match[2] !== "mxCell") continue;
+    const attrs = readAttributes(match[3] ?? "");
+    const source = attrs.get("source");
+    const target = attrs.get("target");
+    cells.push({
+      id: attrs.get("id") ?? "",
+      value: attrs.get("value") ?? "",
+      style: attrs.get("style") ?? "",
+      parent: attrs.get("parent") ?? "",
+      ...source === void 0 ? {} : { source },
+      ...target === void 0 ? {} : { target },
+      vertex: attrs.get("vertex") === "1",
+      edge: attrs.get("edge") === "1"
+    });
+  }
+  return cells;
+}
+function readAttributes(source) {
+  const attributes = /* @__PURE__ */ new Map();
+  const pattern = /([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    const key = match[1] ?? "";
+    if (key === "") continue;
+    attributes.set(key, decodeEntities(match[2] ?? match[3] ?? ""));
+  }
+  return attributes;
+}
+function readStyle(style) {
+  const entries = /* @__PURE__ */ new Map();
+  for (const part of style.split(";")) {
+    const at = part.indexOf("=");
+    if (at <= 0) continue;
+    entries.set(part.slice(0, at).trim(), part.slice(at + 1).trim());
+  }
+  return entries;
+}
+function decodeEntities(text) {
+  return text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\d+);/g, (_whole, code) => safeCodePoint(Number(code))).replace(/&#x([0-9a-fA-F]+);/g, (_whole, code) => safeCodePoint(Number.parseInt(code, 16))).replace(/&amp;/g, "&");
+}
+function safeCodePoint(code) {
+  if (!Number.isFinite(code) || code < 0 || code > 1114111) return "";
+  return String.fromCodePoint(code);
+}
+function stripTags(html) {
+  return html.replace(/<[^>]*>/g, "");
+}
+function emitYaml(spec) {
+  const lines = [`version: ${quote(spec.version ?? "1.0")}`];
+  const title = spec.meta?.title;
+  if (title !== void 0 && title !== "") {
+    lines.push("meta:", `  title: ${quote(title)}`);
+  }
+  const groups = spec.groups ?? [];
+  if (groups.length === 0) {
+    lines.push("groups: []");
+  } else {
+    lines.push("groups:");
+    for (const group of groups) {
+      lines.push(`  - id: ${quote(group.id)}`, `    title: ${quote(group.title)}`);
+      if (group.variant !== void 0) lines.push(`    variant: ${group.variant}`);
+      if (group.parent !== void 0) lines.push(`    parent: ${quote(group.parent)}`);
+    }
+  }
+  lines.push("nodes:");
+  for (const node of spec.nodes) {
+    lines.push(`  - id: ${quote(node.id)}`, `    title: ${quote(node.title)}`);
+    if (node.group !== void 0) lines.push(`    group: ${quote(node.group)}`);
+    if (node.desc !== void 0 && node.desc !== "") lines.push(`    desc: ${quote(node.desc)}`);
+    if (node.variant !== void 0) lines.push(`    variant: ${node.variant}`);
+    const items = node.items ?? [];
+    if (items.length > 0) {
+      lines.push("    items:");
+      for (const item of items) lines.push(`      - ${quote(item)}`);
+    }
+  }
+  if (spec.edges.length === 0) {
+    lines.push("edges: []");
+  } else {
+    lines.push("edges:");
+    for (const edge of spec.edges) {
+      lines.push(`  - from: ${quote(edge.from)}`, `    to: ${quote(edge.to)}`);
+      if (edge.label !== void 0 && edge.label !== "") lines.push(`    label: ${quote(edge.label)}`);
+      if (edge.style !== void 0) lines.push(`    style: ${edge.style}`);
+    }
+  }
+  return `${lines.join("\n")}
+`;
+}
+function quote(value) {
+  return JSON.stringify(value);
+}
+
 // packages/core/src/render.ts
 async function renderArchitecture(input) {
   const validated = validateArchSpec(input.yamlSpec);
@@ -12032,6 +12451,208 @@ async function renderArchitecture(input) {
   };
 }
 
+// plugin/src/tools/files.ts
+import { inflateRawSync } from "node:zlib";
+import { defineTool } from "@deepseek-ai/dsh-tools";
+var YAML_TO_DRAWIO_DESCRIPTION = [
+  "\u628A\u7528\u6237\u624B\u6539\u8FC7\u7684 YAML \u6587\u4EF6\u6E32\u67D3\u6210\u6DF1\u8272\u5361\u7247\u5F0F\u67B6\u6784\u56FE\uFF1A\u8BFB\u6587\u4EF6 \u2192 \u6821\u9A8C \u2192 \u5E03\u5C40 \u2192 \u5BFC\u51FA .drawio\uFF0C\u5E76\u5728\u5BF9\u8BDD\u91CC\u51FA\u9884\u89C8\u5361\u7247\u3002",
+  "\u8FD9\u662F**\u6587\u4EF6\u7EA7**\u901A\u9053\uFF1A\u5165\u53C2\u53EA\u6709\u8DEF\u5F84\uFF0C\u7528\u6765\u54CD\u5E94\u300C\u6211\u6539\u4E86 xxx.yaml\uFF0C\u7ED9\u6211\u770B\u770B\u6548\u679C\u300D\u8FD9\u7C7B\u8BF7\u6C42\uFF1B\u6A21\u578B\u81EA\u5DF1\u5185\u8054\u5199 YAML \u8BF7\u6539\u7528 render_architecture\u3002",
+  "layout \u4E09\u9879\uFF08direction / inner_direction / max_columns\uFF09\u523B\u610F\u4E0D\u5728\u672C\u5DE5\u5177\u6587\u6863\u91CC \u2014\u2014 \u5B83\u4EEC\u662F\u7559\u7ED9**\u7528\u6237\u624B\u6539 YAML** \u7684\u65CB\u94AE\u3002\u7528\u6237\u6539\u5B8C\u7531\u672C\u5DE5\u5177\u91CD\u65B0\u6E32\u67D3\u5373\u53EF\u770B\u5230\u6548\u679C\uFF0C\u4E0D\u8981\u66FF\u7528\u6237\u731C\u8FD9\u4E9B\u503C\uFF0C\u4E5F\u4E0D\u8981\u56E0\u4E3A\u5B83\u4EEC\u4E0D\u5728\u6587\u6863\u91CC\u5C31\u5220\u6389\u3002",
+  "\u6821\u9A8C\u5931\u8D25\u4F1A\u56DE\u7ED3\u6784\u5316\u9519\u8BEF\uFF08\u542B did-you-mean\uFF09\uFF1A\u628A\u9519\u8BEF\u539F\u6837\u544A\u8BC9\u7528\u6237\uFF0C\u6216\u6309\u63D0\u793A\u6539\u6587\u4EF6\u540E\u91CD\u8BD5\uFF1B\u4E0D\u8981\u4F2A\u9020\u5185\u5BB9\u53BB\u7ED5\u8FC7\u6821\u9A8C\u3002"
+].join("\n");
+var DRAWIO_TO_YAML_DESCRIPTION = [
+  "\u628A\u7528\u6237\u624B\u6539\u8FC7\u7684 .drawio \u6587\u4EF6\u53CD\u89E3\u56DE YAML DSL \u6587\u672C\uFF0C\u4EA4\u7ED9\u6A21\u578B\u7EE7\u7EED\u6539\uFF08\u914D\u5408 yaml_to_drawio \u518D\u51FA\u56FE\uFF09\u3002",
+  "\u8FD9\u662F**\u6587\u4EF6\u7EA7**\u56DE\u7A0B\u901A\u9053\uFF1A\u7528\u6237\u5728 draw.io \u91CC\u52A0\u4E86\u6846\u3001\u6539\u4E86\u6807\u9898\u3001\u5220\u4E86\u8FDE\u7EBF\u65F6\uFF0C\u7528\u5B83\u628A\u8BED\u4E49\u6361\u56DE\u6765\u3002",
+  "\u53EF\u8FD8\u539F\uFF1A\u5206\u7EC4 / \u8282\u70B9 / \u8FDE\u7EBF\u7684\u8BED\u4E49\u5B57\u6BB5\uFF08title / desc / items / variant / parent / group / from / to / label / style\uFF09\u3002",
+  "\u4E0D\u53EF\u8FD8\u539F\uFF1A\u51E0\u4F55\u5750\u6807\uFF08DSL \u6CA1\u6709\u5750\u6807\uFF0C\u91CD\u6392\u7531\u5F15\u64CE\u91CD\u7B97\uFF09\u3001\u81EA\u7531\u65B0\u589E\u7684\u56FE\u5F62\u3001\u81EA\u5B9A\u4E49\u6837\u5F0F\u3001layout \u4E09\u9879 \u2014\u2014 \u4F1A\u9010\u6761\u5217\u5728 warnings \u91CC\uFF0C\u8BF7\u636E\u6B64\u51B3\u5B9A\u54EA\u4E9B\u8981\u4EBA\u5DE5\u8865\u3002",
+  "draw.io \u9ED8\u8BA4\u300C\u538B\u7F29\u300D\u4FDD\u5B58\u7684 diagram \u4F1A\u81EA\u52A8\u89E3\u538B\uFF1B\u89E3\u538B\u5931\u8D25\u65F6\u8BF7\u8BA9\u7528\u6237\u7528\u300C\u672A\u538B\u7F29 XML\u300D\u53E6\u5B58\u540E\u518D\u8BD5\u3002"
+].join("\n");
+var inflate = (base64) => decodeURIComponent(inflateRawSync(Buffer.from(base64, "base64")).toString("utf8"));
+function decodeCompressedDiagram(base64) {
+  try {
+    return inflate(base64);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `\u8BE5 .drawio \u7684 <diagram> \u662F\u538B\u7F29\u9875\uFF0C\u4F46\u89E3\u538B\u5931\u8D25\uFF08${reason}\uFF09\u3002\u8BF7\u7528 draw.io \u6253\u5F00\u540E\u300C\u53E6\u5B58\u4E3A\u300D\u672A\u538B\u7F29 XML\uFF0C\u6216\u76F4\u63A5\u628A\u539F\u59CB XML \u8D34\u51FA\u6765\u3002`
+    );
+  }
+}
+function requireFs(ctx) {
+  const fs = ctx.get("fs");
+  if (fs === void 0) {
+    throw new Error("\u672C\u5DE5\u5177\u9700\u8981\u5BBF\u4E3B fs \u670D\u52A1\uFF08ctx.fs\uFF09\uFF0C\u4F46\u5F53\u524D profile \u672A\u52A0\u8F7D\u6587\u4EF6\u7CFB\u7EDF\u63D2\u4EF6\u3002");
+  }
+  return fs;
+}
+function sessionCwd(exec) {
+  const session = exec.agent?.session;
+  return session?.header?.cwd;
+}
+async function readTextObserved(ctx, fs, path, cwd, exec) {
+  const target = await fs.resolve(path, { ...cwd === void 0 ? {} : { cwd }, signal: exec.signal });
+  const text = await fs.readText(target, exec.signal);
+  const info = await fs.stat(target, exec.signal);
+  if (info !== void 0) {
+    ctx.emit("fs/observed", target, { kind: "present", version: info.version }, exec);
+  }
+  return text;
+}
+async function saveBesideYaml(ctx, fs, exec, sourcePath, fileName, xml) {
+  const session = exec.agent?.session;
+  const cwd = sessionCwd(exec);
+  const policy = ctx.get("sandboxPolicy")?.resolve(session === void 0 ? {} : { session });
+  const target = await fs.resolve(joinPath(directoryOf(sourcePath), fileName), {
+    ...cwd === void 0 ? {} : { cwd },
+    signal: exec.signal
+  });
+  const outcome = await fs.writeText(target, xml, void 0, exec.signal, policy);
+  ctx.emit("fs/observed", target, { kind: "present", version: outcome.version }, exec);
+  return target.displayPath;
+}
+function directoryOf(path) {
+  const match = /^(.*)[\\/][^\\/]*$/.exec(path);
+  return match === null ? "" : match[1] ?? "";
+}
+function joinPath(directory, name) {
+  if (directory === "") return name;
+  const separator = directory.includes("\\") && !directory.includes("/") ? "\\" : "/";
+  return `${directory}${separator}${name}`;
+}
+function baseNameWithoutExtension(path) {
+  const base = path.replace(/^.*[\\/]/, "");
+  const stripped = base.replace(/\.[^.]+$/, "");
+  return stripped === "" ? base : stripped;
+}
+function createYamlToDrawio(ctx, deps) {
+  const yamlByCall = /* @__PURE__ */ new WeakMap();
+  return defineTool({
+    name: "yaml_to_drawio",
+    description: YAML_TO_DRAWIO_DESCRIPTION,
+    parameters: {
+      path: {
+        type: "string",
+        required: true,
+        description: "YAML \u6587\u4EF6\u7684\u8DEF\u5F84\uFF08\u76F8\u5BF9\u4F1A\u8BDD\u5DE5\u4F5C\u533A\uFF0C\u6216\u7EDD\u5BF9\u8DEF\u5F84\uFF09\u3002"
+      },
+      save_drawio: {
+        type: "boolean",
+        description: "\u662F\u5426\u628A .drawio \u843D\u76D8\u5230 YAML \u540C\u76EE\u5F55\uFF0C\u7F3A\u7701 true\uFF08\u672C\u5DE5\u5177\u7684\u4E3B\u8981\u7528\u9014\u5C31\u662F\u51FA\u6587\u4EF6\uFF09\u3002"
+      }
+    },
+    output: {
+      // 与 render_architecture 同构：卡片与摘要都能复用同一套展示口径。
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          groups: { type: "integer", required: true },
+          nodes: { type: "integer", required: true },
+          edges: { type: "integer", required: true },
+          width: { type: "number", required: true },
+          height: { type: "number", required: true },
+          file_name: { type: "string", required: true },
+          saved_path: { type: "string" }
+        }
+      },
+      render: (args, value) => [{
+        type: "text",
+        text: `\u5DF2\u6309 ${args.path} \u6E32\u67D3\u67B6\u6784\u56FE\uFF1A${value.groups} \u4E2A\u5206\u7EC4 / ${value.nodes} \u4E2A\u8282\u70B9 / ${value.edges} \u6761\u8FDE\u7EBF\uFF0C\u753B\u5E03 ${Math.round(value.width)}\xD7${Math.round(value.height)}\uFF1B\u9884\u89C8\u5361\u7247\u5DF2\u6302\u5728\u5BF9\u8BDD\u4E2D\uFF0C\u53EF\u5BFC\u51FA ${value.file_name}\u3002` + (value.saved_path === void 0 ? "" : ` \u5DF2\u843D\u76D8\u5230 ${value.saved_path}\u3002`)
+      }],
+      /**
+       * 把 YAML 原文送进 `tool/result.meta`（不进模型上下文）。
+       *
+       * 卡片侧读法：`block.meta?.yaml_spec`。注意它只在**根调用**上投影 ——
+       * PTC 预设下经 `run_code` 派发的子调用没有 meta（宿主 `exec.parent !== undefined` 时跳过），
+       * 那种情况下卡片必须降级（只显示摘要/错误），不能假设一定拿得到。
+       */
+      presentationMeta: (args, value) => {
+        const source = yamlByCall.get(args);
+        return {
+          ...source === void 0 ? {} : { yaml_spec: source },
+          file_name: value.file_name,
+          ...value.saved_path === void 0 ? {} : { saved_path: value.saved_path }
+        };
+      }
+    },
+    async execute(args, exec) {
+      const fs = requireFs(ctx);
+      const cwd = sessionCwd(exec);
+      const source = await readTextObserved(ctx, fs, args.path, cwd, exec);
+      const validated = validateArchSpec(source);
+      if (!validated.ok) {
+        throw new Error(deps.formatDiagnostics(validated.diagnostics, args.path));
+      }
+      const spec = validated.spec;
+      const layout = await layoutSpec(spec);
+      const title = spec.meta.title ?? baseNameWithoutExtension(args.path);
+      const artifact = buildDrawio({ title, spec, layout });
+      yamlByCall.set(args, source);
+      const value = {
+        groups: spec.groups.length,
+        nodes: spec.nodes.length,
+        edges: spec.edges.length,
+        width: Math.round(layout.bounds.width),
+        height: Math.round(layout.bounds.height),
+        file_name: artifact.fileName
+      };
+      if (args.save_drawio !== false) {
+        value.saved_path = await saveBesideYaml(ctx, fs, exec, args.path, artifact.fileName, artifact.xml);
+      }
+      return value;
+    }
+  });
+}
+function createDrawioToYaml(ctx, _deps) {
+  return defineTool({
+    name: "drawio_to_yaml",
+    description: DRAWIO_TO_YAML_DESCRIPTION,
+    parameters: {
+      path: {
+        type: "string",
+        required: true,
+        description: ".drawio \u6587\u4EF6\u7684\u8DEF\u5F84\uFF08\u76F8\u5BF9\u4F1A\u8BDD\u5DE5\u4F5C\u533A\uFF0C\u6216\u7EDD\u5BF9\u8DEF\u5F84\uFF09\u3002"
+      }
+    },
+    output: {
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          yaml_spec: { type: "string", required: true, description: "\u53CD\u89E3\u51FA\u7684 YAML DSL \u6587\u672C\u3002" },
+          warnings: {
+            type: "array",
+            required: true,
+            description: "\u65E0\u6CD5\u8FD8\u539F\u7684\u90E8\u5206\uFF08\u51E0\u4F55\u5750\u6807\u3001\u81EA\u7531\u56FE\u5F62\u3001\u81EA\u5B9A\u4E49\u6837\u5F0F\u3001layout \u4E09\u9879\u2026\uFF09\u3002",
+            items: { type: "string" }
+          }
+        }
+      },
+      render: (_args, value) => [{
+        type: "text",
+        text: [
+          "\u5DF2\u628A .drawio \u53CD\u89E3\u4E3A YAML DSL\uFF1B\u53EF\u76F4\u63A5\u7F16\u8F91\u540E\u4EA4\u7ED9 yaml_to_drawio \u91CD\u65B0\u6E32\u67D3\u3002",
+          "",
+          value.yaml_spec.trimEnd(),
+          ...value.warnings.length === 0 ? [] : ["", `\u65E0\u6CD5\u8FD8\u539F\u7684\u90E8\u5206\uFF08${value.warnings.length} \u6761\uFF09\uFF1A`, ...value.warnings.map((warning) => `- ${warning}`)]
+        ].join("\n")
+      }],
+      /** 与另一个工具对称：卡片/回放可以从 meta 拿到纯 YAML，不必去解析模型可见的那段文本。 */
+      presentationMeta: (_args, value) => ({
+        yaml_spec: value.yaml_spec,
+        warnings: value.warnings
+      })
+    },
+    async execute(args, exec) {
+      const fs = requireFs(ctx);
+      const cwd = sessionCwd(exec);
+      const xml = await readTextObserved(ctx, fs, args.path, cwd, exec);
+      const parsed = parseDrawio(xml, decodeCompressedDiagram);
+      return { yaml_spec: parsed.yamlSpec, warnings: parsed.warnings };
+    }
+  });
+}
+
 // plugin/src/host.ts
 var inject = ["tools"];
 var MAX_DIAGNOSTICS = 12;
@@ -12051,7 +12672,7 @@ var DESCRIPTION = [
   "id \u7528\u5B57\u6BCD\u6570\u5B57\u4E0B\u5212\u7EBF\u3002\u6821\u9A8C\u5931\u8D25\u4F1A\u56DE\u7ED3\u6784\u5316\u9519\u8BEF\uFF08\u542B did-you-mean\uFF09\uFF0C\u6309\u63D0\u793A\u4FEE\u6B63\u540E\u91CD\u8BD5\u3002",
   "\u9700\u8981\u628A .drawio \u843D\u76D8\u5230\u5DE5\u4F5C\u533A\u65F6\u7F6E save_drawio: true\u3002"
 ].join("\n");
-function formatDiagnostics(diagnostics) {
+function formatDiagnostics(diagnostics, subject = "yaml_spec") {
   const shown = diagnostics.slice(0, MAX_DIAGNOSTICS);
   const lines = shown.map((d, index) => {
     const hint = d.hint === void 0 ? "" : ` Did you mean '${d.hint}'?`;
@@ -12060,7 +12681,7 @@ function formatDiagnostics(diagnostics) {
   const hidden = diagnostics.length - shown.length;
   if (hidden > 0) lines.push(`\u2026 \u53E6\u6709 ${hidden} \u5904\u95EE\u9898\u672A\u5217\u51FA\u3002`);
   return [
-    `ValidationError: yaml_spec \u4E2D\u6709 ${diagnostics.length} \u5904\u95EE\u9898\uFF0C\u8BF7\u4FEE\u6B63\u540E\u91CD\u65B0\u8C03\u7528\u672C\u5DE5\u5177\u3002`,
+    `ValidationError: ${subject} \u4E2D\u6709 ${diagnostics.length} \u5904\u95EE\u9898\uFF0C\u8BF7\u4FEE\u6B63\u540E\u91CD\u65B0\u8C03\u7528\u672C\u5DE5\u5177\u3002`,
     "",
     ...lines
   ].join("\n");
@@ -12079,7 +12700,7 @@ async function saveDrawio(ctx, exec, fileName, xml) {
   return target.displayPath;
 }
 function apply(ctx) {
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineTool2({
     name: "render_architecture",
     description: DESCRIPTION,
     parameters: {
@@ -12129,6 +12750,9 @@ function apply(ctx) {
       return value;
     }
   }));
+  const fileToolDeps = { formatDiagnostics };
+  ctx.tools.register(createYamlToDrawio(ctx, fileToolDeps));
+  ctx.tools.register(createDrawioToYaml(ctx, fileToolDeps));
 }
 export {
   DESCRIPTION,

@@ -462,7 +462,7 @@ M0 工程基线
 | 依据文档 | [prd.md](./prd.md) §4.2 / §4.3 / §4.4 / §7 Phase 2 |
 | 前置 | Phase 1 引擎（`schema` / `layout` / `drawio` / `core`）已交付并验收（§5.3） |
 | 交付路线 | **用户裁决（2026-10-01）：先最小闭环 S1 验证插件接口，再接 SVG 卡片 S2** |
-| 状态 | S1 已落地并端到端验证（见 P2.4）；S2 待开工 |
+| 状态 | S1 / S2 均已落地并端到端验证（见 P2.4 / P2.6）；遗留见 P2.5 |
 
 ## P2.1 交付物形态：一个可安装 bundle
 
@@ -528,15 +528,77 @@ plugin/
 * **C1 · `fs.writeText` 省略 `sandboxPolicy` ≠ 沿用当前会话策略**。`fs-sandbox/src/index.ts:123` 是 `const policy = sandboxPolicy ?? this.ctx.sandboxPolicy.resolve()` —— 不带 session 的 `resolve()` 用的是**部署默认**（`workspace-write` + 部署兜底根），于是会话工作区里的目标被判成"外面"，报 `cannot write "…": file access denied under workspace-write mode`。修法：每次执行都 `ctx.sandboxPolicy.resolve({ session })` 再显式传下去（与 `tool-fs` 一致）。
 * **C2 · 本 profile 的宿主侧热更新是关的**。`hmr` 行默认 `root: []`（只保留显式配置监听），且 `plugin_manager` 的 `set_plugin` 关→开循环**不会**让已缓存的 ESM 模块失效 —— 实测：改完诊断文案、重打包、重启插件后，工具调用仍返回旧文案。**结论：宿主半的任何改动都需要重启 dsh 才生效**；但**客户端半不需要** —— 客户端产物的 URL 带内容 sha1 的 `rev` 戳，重打包后刷新页面就能取到新字节（S2 实测：刷新前后「带 SVG 的卡片数」3 → 6）。
 
-## P2.5 遗留与 TODO
+## P2.5 遗留与 TODO（全部登记，2026-10-01 第二轮更新）
 
-| ID | 项 | 说明 |
+### 已完成（第三轮，2026-10-01）
+
+| ID | 项 | 结果 |
 | :--- | :--- | :--- |
-| **T1** | 第二个工具 `drawio_to_yaml` | 契约已冻结（`{path}` → `{yaml_spec, warnings}`），**本轮不注册、不实现**。难点：mxGraph cell → DSL 只能恢复语义，用户手改的几何/新增图形/自定义样式无法还原，需先定「丢弃 vs 降级成 items 注释」策略 |
-| **T2** | schema 错误会短路拓扑检查 | `validateArchSpec` 在 Ajv 阶段失败即返回，不再跑外键/环检查，模型需多轮才能收敛（PRD §4.3 期望一次拿到全部问题）。方向：防御式归一化后合并报告 |
-| **T3** | 客户端半无类型检查 | 仓库未装 `@types/react`，`plugin/src/**` 只经 esbuild（语法）+ 运行验证。要补则加 plugin 局部 tsconfig |
-| **T4** | ~~`save_drawio` 端到端复验~~ | ✅ 已完成 |
-| **T5** | 卡片像素级视觉回归 | 本机无法用 BrowserRig 截到卡片；原因与绕法见 P2.6「验证手段的限制」 |
+| **T1** | 双向文件级工具对 `yaml_to_drawio` + `drawio_to_yaml` | ✅ 见 §P2.7（子代理交付；主代理独立复验：改动范围合规、tsc 绿、5 个样例往返全绿） |
+| **T2** | schema 错误与引用/层级错误**合并**报告 | ✅ 见 §P2.8 |
+| **T7** | 卡片暴露 `saved_path` | ✅ 卡片行下新增「已落盘到 <绝对路径>」 |
+
+### 待做（按建议顺序）
+
+| ID | 项 | 说明 | 优先级 |
+| :--- | :--- | :--- | :--- |
+| **T6** | 回合末尾的卡片再现（turnTail 条目） | 工具行被 step 折叠行收起时，回合末尾仍能看到本轮架构图 | 高（用户提出） |
+| **T3** | 插件两半无类型检查 | 未装 `@types/react`；`plugin/src/**` 只经 esbuild 语法 + 运行验证。补法：plugin 局部 tsconfig | 中 |
+| **T7** | 卡片暴露 `saved_path` | 落盘成功时结果里有绝对路径，卡片只在「详情」原文里显示 | 低但便宜 |
+| **T8** | 行头打磨 | 现在按 token 自绘，不是 ui-primitives ToolRow 的逐像素复刻（缺 hover 态、折叠动画、Inspect 入口） | 低（观感） |
+| **T5** | 卡片像素级视觉回归 | **可做了**（见 P2.6 更正）：先把该 step 的「已调用工具」折叠行点开再截图 | 低 |
+| **T9** | PRD Phase 3 · 行内 ` ```arch-yaml ` 预览 | PRD §7 Phase 3 第 1 条，双通道容错 | 观望 |
+| **T10** | PRD Phase 3 · 节点点击详情面板 | 悬停高亮已做；点击开面板未做 | 观望 |
+| **T11** | `layout` 的手动通道 | 已裁决 layout 不进模型文档、留给用户手改 YAML；「改完看效果」由 T1 的 `yaml_to_drawio` 承担 | 由 T1 覆盖 |
+| **T12** | 发布通路 | `dsh plugin add @gjy_1992/dsh-diagram` 需 npm 发布 + 版本流程（PRD §6.4） | **押后**（用户裁决） |
+
+### 不做（用户裁决，留档避免反复讨论）
+
+| ID | 项 | 裁决 |
+| :--- | :--- | :--- |
+| **T4** | `save_drawio` 端到端复验 | ✅ 已完成 |
+| **X1** | 用 draw.io 客户端打开浏览器下载的 .drawio | 不做：不强求用户装 draw.io（Phase 1 已用桌面版验过宿主产物） |
+| **X2** | 改变宿主的 step 折叠默认行为 | 不做：`message.stepProcess` 属 ui-chat（`shadows-shipped-ui`），插件只旁路（T6），不替宿主决定 |
+
+### 第二轮决策
+
+| ID | 决策 | 说明 |
+| :--- | :--- | :--- |
+| **P2-D7** | 发布押后 | 先把功能做完整，发布通路最后再谈 |
+| **P2-D8** | T1 从「单向 drawio→yaml」升级为**双向文件级工具对** | `yaml_to_drawio`（新增）+ `drawio_to_yaml`。动机：`layout` 是留给**用户手改 YAML** 的，改完要能"看到效果"，所以需要一个以**文件路径**为入口的渲染工具。`render_architecture` 是模型内联写 YAML 的通道，不该被用来反复渲染用户手改的文件 |
+| **P2-D9** | 放弃 draw.io 客户端验证 | 见 X1 |
+| **P2-D10** | 折叠问题用 turnTail 旁路，不覆盖宿主 | 见下 |
+
+### T6 技术方案（回合末尾再现卡片）
+
+**根因（实测定位）**：工具调用渲染在 ui-chat 的 **step 过程折叠行**内（locale key `message.stepProcess.done.tools` = 「已调用工具」），回合结束后默认收起；折叠态下子元素仍挂在 DOM（`getBoundingClientRect()` 有值）但**不绘制** —— 这既解释了用户看到的"卡片被折叠"，也解释了 P2.6 里我截图总截到旁白的原因（此前归因为"分页层"，**此处更正**）。
+
+**做法**：向 `conversation.chat.turnTail`（list 槽，scope session）注册一个 **fresh id** `dsh-diagram-turn-preview` 的条目，在**回合末尾**渲染本轮架构图的紧凑预览（标题 + 缩略 SVG + 下载按钮），与工具行是否折叠无关。
+
+**槽位契约（inspect 实测）**：
+
+* 注册项：`{ name, id, order?, label? }`；"A fresh `id` adds an entry; entries without content return null."
+* owner props：`{ turn: TurnLocation; seq: number; openFile: (path: string) => void }`
+* `TurnLocation`：`{ turn, start, end, status, steps, data }`（`packages/client/ui-conversation/src/client/contract/conversation.ts:95`）
+
+**先例（用户 profile 里现成跑着的第三方实现）**：`dsh-univer-office` 的 `univer-turn-preview`（`lib/client.js` 约 23306–23355），三条可抄的经验：
+
+1. `inject = ['slots', 'locale', 'conversation', 'uiConversation']`，并 `uiConversation.events.register(<事件定义>)`（对 "already registered" 容错）来承载"本回合有哪些工件"的数据。
+2. 新契约用 `{ name, id, locale, inject }` 注册；若宿主抛 `requires options.select`，退回旧契约 `{ name, priority: -10, locale, select, inject }` —— 兼容分支照抄一份防御（本机 0.1.7-rc.2 应走新契约）。
+3. list 槽给的是 owner props 而非 chain 的 `matched`，**条目组件自己解析本回合并匹配**。
+
+**验收**：连续两次调用 `render_architecture`，回合结束后**不展开任何折叠行**即可在回合末尾看到图；点下载能拿到 .drawio。
+
+### 分工与写作用域（互不重叠）
+
+| 工作流 | 负责 | 写作用域 |
+| :--- | :--- | :--- |
+| T1 双向文件工具 | 子代理 `t1-roundtrip` | `packages/drawio/src/parse-drawio.ts`(新)、`packages/drawio/src/index.ts`、`plugin/src/tools/files.ts`(新)、`plugin/src/host.ts` |
+| T2 合并报告 | 主代理 | `packages/schema/src/validate.ts`、`packages/schema/src/diagnostics.ts` |
+| T6 turnTail 再现 | 主代理（T2 之后） | `plugin/src/client.tsx`、`plugin/src/diagram/*` |
+| **打包与安装** | **只由主代理做** | `plugin/index.js`、`plugin/client.js`、`scripts/build-plugin.mjs` |
+
+打包独占的理由：`node scripts/build-plugin.mjs` 会同时重写两半产物，两个写者并发会互相覆盖。子代理只用 `tsx`/CLI 验证纯逻辑，产物由主代理统一重建（宿主半改动需重启才生效，攒到一次重启）。
 
 ## P2.6 S2 执行结果（2026-10-01）：SVG 深色预览卡片
 
@@ -571,5 +633,122 @@ plugin/
 
 ### 验证手段的限制（如实记录）
 
-* **拿不到卡片的像素截图**。这个 GUI 的分页式对话把非活动页留在 DOM 中，但绘制在活动页之下：卡片 `getBoundingClientRect()` 有值，而同一坐标的 `elementFromPoint()` 返回旁白 `<p>`，`locator.screenshot()` 因此一直卡在 actionability 超时、`page.screenshot({clip})` 只能截到旁白。**所以交互与几何都用 DOM 断言验证（上表），「好不好看」只能靠人眼**（用户在自己 GUI 里看得到卡片）。
+* **卡片像素截图（此处更正早先的归因）**：截图失败的原因**不是**"分页式对话层"，而是工具行位于 ui-chat 的 **step 过程折叠行**（「已调用工具」）内部 —— 折叠态下子元素仍挂在 DOM（`getBoundingClientRect()` 有值）但**不绘制**，同坐标的 `elementFromPoint()` 返回可见的旁白 `<p>`，于是 `locator.screenshot()` 卡在 actionability 超时、`page.screenshot({clip})` 只能截到旁白。**绕法**：先把该 step 的折叠行点开再截图（T5 因此从"不可得"改为"可做"，并把根因与旁路方案登记为 T6）。
 * **下载事件拦不到**：BrowserRig 是扩展承载页，Chromium 禁掉了 `Browser.setDownloadBehavior`。改为拦截 `URL.createObjectURL` + `anchor.click`，证明「浏览器里生成了正确的字节与文件名」；真正的保存动作由浏览器自己完成。
+
+## P2.7 T1 执行结果（2026-10-01）：文件级双向工具对
+
+> §P2.5 的 T1 行原本指向「P2.7 任务书」，而任务书只存在于派发时的那份 prompt 里、并未落盘。本节同时承担**契约**与**结果**记录。
+
+### 交付物
+
+| 文件 | 职责 |
+| :--- | :--- |
+| `packages/drawio/src/parse-drawio.ts` | **新建**：明文 `.drawio` → YAML DSL 反解。纯函数、零 `node:*` 依赖（包根会被客户端产物内联，压缩页解压靠注入 `InflateRaw`） |
+| `packages/drawio/src/index.ts` | 加一行 `export * from './parse-drawio';` |
+| `plugin/src/tools/files.ts` | **新建**：`yaml_to_drawio` + `drawio_to_yaml` 两个宿主工具的工厂 |
+| `plugin/src/host.ts` | `apply()` 里注册两个新工具；`formatDiagnostics` 以**依赖注入**传入，避免 host.ts ↔ tools/files.ts 循环 import |
+| `scripts/roundtrip-check.ts` | **新建**：往返一致性 / 幂等 / 压缩页 / 手改降级的程序化断言 |
+
+### 契约
+
+| 工具 | 参数 | 输出 | 失败通道 |
+| :--- | :--- | :--- | :--- |
+| `yaml_to_drawio` | `path`(必填) / `save_drawio`(可选，**缺省 true**) | `{ groups, nodes, edges, width, height, file_name, saved_path? }`（与 `render_architecture` 同构） | `throw new Error(formatDiagnostics(...))`（复用 `render_architecture` 的实现） |
+| `drawio_to_yaml` | `path`(必填) | `{ yaml_spec, warnings }` | 压缩页解压失败 / 非 draw.io 明文 / 无任何节点 → `throw`；**部分**不可还原 → `warnings` |
+
+关键行为：**`.drawio` 落在 YAML 同目录**（不是会话 cwd）；文件名取 `meta.title`，缺失时回落到「YAML 文件名去扩展名」；读文件后补发 `fs/observed`，否则模型紧接着 `edit` 这个 YAML 会被 `fs-observation-policy` 判 `FS_NOT_OBSERVED`（README 明说「直接 ctx.fs 读取不发 fs/observed」）。
+
+### 验收（命令与输出）
+
+```text
+$ pnpm exec tsx scripts/roundtrip-check.ts
+往返一致性检查：YAML → buildDrawio → parseDrawio → YAML
+
+✅ 一致  examples/03-rpc-items.yaml  (3 分组 / 6 节点 / 7 连线)
+✅ 一致  examples/04-nested-groups.yaml  (5 分组 / 5 节点 / 4 连线)
+
+手改夹具（examples/03-rpc-items.yaml，5 处外科手术）反解告警 7 条：
+  · 文件里有 2 个 <diagram> 页，只反解了第一页。
+  · 分组 'g_infra'：style 里既没有 dashed 也没有 fillColor，variant 已回落为默认的 dashed。
+  · 节点 'director'：配色不在引擎调色板里（fillColor=#123456），variant 已回落为 default。
+  · 连线 'e_0'：两个方向都没有箭头，DSL 无此形态，已按有无 dashed 处理。
+  · 顶点 'free_note' 看起来不是本工具导出的卡片（…）：已按普通节点收下（title 取纯文本、variant=default），请人工确认是否保留。
+  · 已丢弃 17 个 cell 的几何坐标（x / y / width / height）：DSL 不含坐标，重新渲染时由布局引擎重排。
+  · layout 三项（direction / inner_direction / max_columns）不写在 .drawio 里，未还原；需要时请手工补写。
+```
+
+额外跑通了全部 5 个合法样例（`examples/01,02,03,04,05`）：`id 集合 + title/desc/items/variant/group/parent/from/to/label/style` 逐条一致、反解产物自身可再校验、二次往返逐字节幂等、压缩页与明文结果相同。`pnpm build`（tsc strict，`& "$PWD\node_modules\.bin\tsc.cmd" --noEmit`）exit 0。
+
+### 关键结论：`presentationMeta` → 客户端 `meta` **成立**（已验证）
+
+| 环节 | 证据 |
+| :--- | :--- |
+| 投影器只在**根调用**上执行 | `dsh/packages/core/tools/src/index.ts:1845`（`if (exec.parent === undefined && tool.output.presentationMeta !== undefined)`），结果落 `meta`（同文件 `:1852`、`:1859`） |
+| `tool/result` 事件**携带** `meta` | `dsh/packages/core/agent-loop/src/tool-calls.ts:288`（`...result.meta !== undefined ? { meta: result.meta } : {}`） |
+| 事件 schema 允许 `meta` | `dsh/packages/core/session/src/types.ts:384`（`meta?: JsonValue`，必须 JSON 可序列化，`Session.append` 用 `isJsonValue` 运行时校验） |
+| 客户端投影出 `ToolResultNode.meta` | `dsh/packages/client/ui-chat/src/client/conversation-nodes/tool.ts:77`（`meta: match.event.data.meta`） |
+| 类型里就有这个字段 | `dsh/packages/client/ui-conversation/src/client/contract/records.ts:170`（`meta?: unknown`） |
+| 视图确实拿得到 | `dsh/packages/client/ui-tool/src/client/tool/ToolCallTree.tsx:57` 把 owner（含 `phase:'result', block: ToolResultNode`）交给 `tool.call.toolview`；类型见 `packages/client/ui-tool/src/client/contract/slots.ts:100/103` |
+
+因此卡片读法为 **`block.meta?.yaml_spec`**，且**零模型上下文开销**（`meta` 只进会话日志，不进模型消息）。
+
+两个必须知道的限制：
+
+1. **PTC 嵌套派发拿不到 meta**：经 `run_code` 派发的子调用 `exec.parent !== undefined`，投影器被跳过（同源注释见 `packages/client/ui-tool/src/client/tool/models/image-card-model.ts:36-38`）。订阅方必须容忍 `meta` 缺失并降级（例如卡片只显示摘要 + 保存路径）。
+2. 因此本工具的 `presentationMeta` 用 **`WeakMap<args, yaml>`** 按调用身份取值（`presentationMeta(args, value)` 的 `args` 与 `execute` 的 `args` 是同一个对象：`index.ts:1581` 与 `:1848` 都读 `exec.arguments`）。用模块级变量会在并发调用间串味；已在 `tmp/t1-harness.ts` 里断言「换一个 args 对象取不到别人的 YAML」。
+
+**没有**采用「把 YAML 塞进结果文本」的降级方案（那会进模型上下文、每次请求重复计费）。
+
+### 反解无法还原的清单与降级策略
+
+| 无法还原 | 降级策略 |
+| :--- | :--- |
+| 几何坐标（x/y/width/height、连线折点） | **丢弃** + 汇总 warning（「已丢弃 N 个 cell 的几何坐标」）。DSL 无坐标，重排由引擎重算 |
+| `layout` 三项（direction / inner_direction / max_columns） | **不写** + 固定一条 warning 提示手工补写。它们本来就不在图里 |
+| `meta` 的 desc / summary / guide | **丢弃**（`.drawio` 里没有位置存它们）；`meta.title` 从 `<diagram name>` 还原 |
+| 自由新增的图形 / 文本框 | **收下**（用户手加的东西也是他改的内容，丢掉更糟）：`title` 取纯文本、`variant=default`，并给一条合并 warning 让用户确认 |
+| 自定义样式（配色/形状/字号被改） | 写不出 DSL 的**形状/字号**丢弃；**配色**尽力反查 `NODE_THEME`，查不到则回落 `default` + warning |
+| 多页 `<diagram>` | 只反解第一页 + warning |
+| 无 `source`/`target` 的浮动连线 | **丢弃** + warning |
+| 边 id（`e_0`…） | DSL 里没有边 id，天然丢弃（幂等性不受影响） |
+
+压缩页（draw.io 默认「压缩」保存）**自动解压**（base64 → `inflateRaw` → `decodeURIComponent`），解压失败给可操作文案。反解侧刻意保持零依赖，解压函数由宿主注入，因此 `scripts/roundtrip-check.ts` 能用 node:zlib 注入同一个函数并断言「压缩页与明文逐字节相同」。
+
+## P2.8 T2 执行结果（2026-10-01）：结构 + 引用 + 层级一次报全
+
+### 问题
+
+`validateArchSpec` 在 Ajv 阶段失败即 `return`，拓扑/层级检查根本不跑 —— 模型要先修完结构、再修引用、再修层级，一轮只拿一类错误。PRD §4.3 期望「一次把问题都摆出来」。
+
+### 做法：把引用级检查抽成两条路径共用的唯一实现
+
+* 新增 `RefView`（每个条目只留「能读出来的合法 id」+ 它在原数组中的下标）与 `refViewOf()`：对**任意输入**尽力抽取，绝不抛异常。
+* 引用级检查（ID 重复 / node↔group id 冲突 / 外键 / parent 自引用·成环·深度）集中到 `collectReferenceDiagnostics(view)`：
+  * 结构通过 → 对 `NormalizedSpec` 跑一遍，全绿才算 ok（行为与历史逐条一致）；
+  * 结构失败 → **也**对原始输入跑一遍，两类诊断合并返回。
+* 防御式契约：读不出合法 id 的条目一律跳过（该问题 Ajv 已报过），因此不新增失败模式、也不会重复报同一个问题。
+
+### 验收
+
+| 验收项 | 改动前 | 改动后 |
+| :--- | :--- | :--- |
+| 反例 `tmp/diag-check.yaml`（错误枚举 + 悬空 `edge.from` + 悬空 `parent`） | 1 条（只报枚举） | **3 条**：`SCHEMA_ENUM` + `EDGE_SOURCE_UNKNOWN`（带 did-you-mean）+ `GROUP_PARENT_UNKNOWN` |
+| `examples/90-invalid.yaml`（回归） | 5 条、特定顺序 | **同样 5 条、顺序一致**（零漂移） |
+| `pnpm build`（tsc strict） | — | exit 0 |
+| 5 个合法样例端到端（`cli build-all examples`） | 5/5 | 5/5 |
+
+### 顺带修的一处文案
+
+`formatDiagnostics(diagnostics, subject = 'yaml_spec')`：文件级工具的入参是 `path`，首行若仍说「yaml_spec 中有 N 处问题」，模型会去找一个不存在的 `yaml_spec`。现在 `yaml_to_drawio` 传 `args.path`（`files.ts` 走依赖注入，改动落在 host.ts 一处 + 调用处一处）。
+
+### 客户端集成（同一轮做掉的）
+
+* `plugin/src/client.tsx` 现在注册**两个** keyed toolview（`render_architecture` + `yaml_to_drawio`，generator 形态一次注入）。
+* YAML 来源优先级：`args.yaml_spec` → `block.meta.yaml_spec`（`tool/result.meta`，零模型上下文开销）；两者都没有时**显示一行说明**（`run_code` 嵌套调用拿不到 meta），而不是空白卡片。
+* 文件级工具没有 title 参数：回落 `YAML 的 meta.title`；`meta.saved_path` 直接显示为「已落盘到 <绝对路径>」（T7）。
+* 产物自检：宿主半 476.6 KB（三个工具、`node:zlib` 保持 external）；客户端半 195.8 KB / 22 模块，**Ajv 痕迹 0、parse-drawio 污染 0**（esbuild 全量 tree-shake）。
+
+### 生效条件（重要）
+
+宿主半的改动（T2 的合并报告 + 两个新工具）**必须重启 dsh 才生效**（P2.4 的 C2）；客户端半刷新页面即生效。本轮改动攒到**一次重启**。

@@ -5393,7 +5393,7 @@ function DiagramCanvas({ scene, fileName, onDownload, labels, idPrefix }) {
 // plugin/src/client.tsx
 var import_jsx_runtime2 = require("react/jsx-runtime");
 var NS = "dsh-diagram";
-var TOOL_NAME = "render_architecture";
+var TOOL_NAMES = ["render_architecture", "yaml_to_drawio"];
 var zh = {
   title: "\u67B6\u6784\u56FE",
   preparing: "\u6B63\u5728\u8BFB\u53D6\u53C2\u6570\u2026",
@@ -5402,7 +5402,9 @@ var zh = {
   failed: "\u6E32\u67D3\u5931\u8D25",
   detail: "\u8BE6\u60C5",
   hide: "\u6536\u8D77",
+  saved: "\u5DF2\u843D\u76D8\u5230",
   reparseFailed: "\u5361\u7247\u65E0\u6CD5\u91CD\u7B97\u5E03\u5C40\uFF08\u5BBF\u4E3B\u5DF2\u901A\u8FC7\u6821\u9A8C\uFF0C\u8FD9\u662F\u9884\u89C8\u4FA7\u7684\u95EE\u9898\uFF09",
+  metaMissing: "\u5361\u7247\u8BFB\u4E0D\u5230 YAML\uFF1A\u6587\u4EF6\u7EA7\u5DE5\u5177\u7684 meta \u6CA1\u9001\u8FBE\uFF08\u7ECF run_code \u5D4C\u5957\u8C03\u7528\u65F6\u4F1A\u8FD9\u6837\uFF09\u3002\u8BF7\u5C55\u5F00\u300C\u8BE6\u60C5\u300D\u67E5\u770B\u5BBF\u4E3B\u8FD4\u56DE\u7684\u6458\u8981\u4E0E\u843D\u76D8\u8DEF\u5F84\u3002",
   fitWidth: "\u9002\u5E94\u5BBD\u5EA6",
   fitAll: "\u6574\u56FE",
   zoomIn: "\u653E\u5927",
@@ -5419,7 +5421,9 @@ var en = {
   failed: "Render failed",
   detail: "Details",
   hide: "Hide",
+  saved: "Saved to",
   reparseFailed: "The card could not re-derive the layout (the host validated it; this is a preview-side problem)",
+  metaMissing: "The card cannot read the YAML: the file-tool meta did not reach the client (this happens for run_code sub-calls). Expand Details for the host summary and saved path.",
   fitWidth: "Fit width",
   fitAll: "Whole diagram",
   zoomIn: "Zoom in",
@@ -5428,6 +5432,9 @@ var en = {
   unit: "nodes",
   link: "edges"
 };
+function asRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+}
 function flatten(content) {
   return content.map((block) => block.type === "text" && typeof block.text === "string" ? block.text : JSON.stringify(block)).join("\n");
 }
@@ -5435,19 +5442,22 @@ function readSlice(block) {
   const settled = typeof block.kind === "string";
   const argsRaw = settled ? block.call?.argsRaw ?? "" : block.phase === "start" ? block.argsRaw ?? "" : null;
   let title = "";
-  let yamlSpec = "";
+  let argsYaml = "";
   if (argsRaw !== null && argsRaw !== "") {
     try {
       const parsed = JSON.parse(argsRaw);
       if (typeof parsed.title === "string") title = parsed.title;
-      if (typeof parsed.yaml_spec === "string") yamlSpec = parsed.yaml_spec;
+      if (typeof parsed.yaml_spec === "string") argsYaml = parsed.yaml_spec;
     } catch {
     }
   }
+  const meta = settled ? asRecord(block.meta) : void 0;
+  const yamlSpec = argsYaml !== "" ? argsYaml : typeof meta?.yaml_spec === "string" ? meta.yaml_spec : "";
+  const savedPath = typeof meta?.saved_path === "string" ? meta.saved_path : null;
   const result = settled ? flatten(block.content ?? []) : null;
   const isError = settled ? block.isError === true : false;
   const state = !settled ? block.phase === "preparing" ? "preparing" : "running" : isError ? "error" : "ok";
-  return { argsRaw, yamlSpec, title, result, isError, state };
+  return { argsRaw, yamlSpec, title, result, savedPath, isError, state };
 }
 function asArchSpec(value) {
   if (typeof value !== "object" || value === null) throw new Error("YAML \u9876\u5C42\u4E0D\u662F\u5BF9\u8C61");
@@ -5509,7 +5519,15 @@ var styles2 = {
     maxHeight: "260px",
     overflow: "auto"
   },
-  note: { fontSize: "12px", color: "var(--dsw-alias-label-secondary)" }
+  note: { fontSize: "12px", color: "var(--dsw-alias-label-secondary)" },
+  saved: {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+    fontSize: "11px",
+    color: "var(--dsw-alias-label-secondary)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap"
+  }
 };
 function stateColor(state) {
   if (state === "error") return "var(--dsw-alias-state-error-primary)";
@@ -5539,7 +5557,7 @@ function DiagramCard(props) {
         const spec = normalizeSpec(asArchSpec(parsed.value));
         const layout = await layoutSpec(spec);
         const scene = buildScene(layout, spec);
-        if (!cancelled) setModel({ scene, spec, layout, title });
+        if (!cancelled) setModel({ scene, spec, layout, title: title !== "" ? title : spec.meta.title ?? "" });
       } catch (error) {
         if (cancelled) return;
         setModel(null);
@@ -5579,10 +5597,11 @@ function DiagramCard(props) {
   }), [t]);
   const statusText = slice.state === "preparing" ? t("preparing") : slice.state === "running" ? t("running") : slice.state === "error" ? t("failed") : t("done");
   const counts = model === null ? "" : `${model.layout.nodes.length} ${t("unit")} \xB7 ${model.layout.edges.length} ${t("link")}`;
-  const summary = [counts, title].filter((part) => part !== "").join(" \xB7 ");
+  const summary = [counts, title !== "" ? title : model?.title ?? ""].filter((part) => part !== "").join(" \xB7 ");
   const details = slice.result ?? slice.argsRaw ?? "";
   const canRender = model !== null;
-  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: styles2.row, "data-dsh-diagram-card": TOOL_NAME, children: [
+  const metaMissing = slice.state !== "preparing" && slice.state !== "error" && yamlSpec === "";
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: styles2.row, "data-dsh-diagram-card": props.toolName ?? "render_architecture", children: [
     /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: styles2.head, children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { ...styles2.dot, background: stateColor(slice.state) }, "aria-hidden": true }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: styles2.name, children: t("title") }),
@@ -5600,13 +5619,19 @@ function DiagramCard(props) {
         idPrefix: `dsh-diagram-${callId ?? "call"}`
       }
     ),
+    slice.savedPath !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: styles2.saved, title: slice.savedPath, children: [
+      t("saved"),
+      " ",
+      slice.savedPath
+    ] }),
     slice.state === "error" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("pre", { style: { ...styles2.body, color: "var(--dsw-alias-state-error-primary)" }, children: slice.result ?? "" }),
+    metaMissing && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: styles2.note, children: t("metaMissing") }),
     modelError !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: styles2.note, children: [
       t("reparseFailed"),
       ": ",
       modelError
     ] }),
-    slice.state !== "error" && model === null && modelError === null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: styles2.note, children: statusText }),
+    slice.state !== "error" && model === null && modelError === null && !metaMissing && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: styles2.note, children: statusText }),
     open && details !== "" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("pre", { style: styles2.body, children: details })
   ] });
 }
@@ -5615,10 +5640,14 @@ var client_default = {
   apply(ctx) {
     ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-diagram: dictionaries");
     const t = ctx.locale.bind(NS);
-    ctx.slots.inject("tool.call.toolview", () => ctx.slots.register(
-      { name: "tool.call.toolview", key: TOOL_NAME, locale: NS },
-      (props) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(DiagramCard, { ...props, t })
-    ));
+    ctx.slots.inject("tool.call.toolview", function* () {
+      for (const key of TOOL_NAMES) {
+        yield ctx.slots.register(
+          { name: "tool.call.toolview", key, locale: NS },
+          (props) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(DiagramCard, { ...props, t })
+        );
+      }
+    });
   }
 };
 
