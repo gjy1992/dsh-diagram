@@ -11,6 +11,9 @@
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json"
   },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.1.7-rc.2"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
