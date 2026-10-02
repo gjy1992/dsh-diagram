@@ -13,12 +13,342 @@ dsh-diagram turns a short YAML description of a system — who contains whom, wh
 
 ## Table of Contents
 
+- [What it gives you](#what-it-gives-you)
+- [Usage example](#usage-example)
 - [Use this repository](#use-this-repository)
 - [Understand the implementation](#understand-the-implementation)
 - [Further Exploration](#further-exploration)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 - [Dev Note](#dev-note)
+
+## What it gives you
+
+One YAML description in, three tools out. This is the plugin's whole surface:
+
+| Tool | What it does | Arguments | Returns |
+| :--- | :--- | :--- | :--- |
+| `render_architecture` | the model writes the YAML inline; a preview card appears in the conversation | `title` (required), `yaml_spec` (required), `save_drawio?` (default `false`) | `groups` / `nodes` / `edges` / `width` / `height` / `file_name`, plus `saved_path` when it wrote a file |
+| `yaml_to_drawio` | render a `.yaml` a human edited — the `.drawio` is written **next to the YAML** | `path` (required), `save_drawio?` (default **`true`**) | the same shape as above |
+| `drawio_to_yaml` | the return trip: a `.drawio` adjusted by hand goes back to semantic YAML | `path` (required) | `yaml_spec` + `warnings[]` (geometry, free-hand shapes, custom styles, the three `layout` knobs) |
+
+What that buys you inside a conversation:
+
+- **A dark preview card rendered in the chat** — zoomable, with hover-highlighted edges. The card is drawn from tool-result metadata, so even a 50-node diagram costs no extra model context.
+- **A plaintext `.drawio`** you can keep editing in draw.io: uncompressed XML that matches the CLI's output byte for byte apart from the `<diagram>` id/name, so there is no lock-in.
+- **A round trip** — `drawio_to_yaml` recovers titles, descriptions, `items`, variants and nesting from a hand-edited file, and lists what it could not recover instead of guessing.
+- **One structured failure report** — every structural, reference and hierarchy problem at once, each with a path, a code and a did-you-mean candidate (capped at 12 lines), so the model fixes them in a single retry.
+
+## Usage example
+
+Nothing below is hand-drawn, and this is the product end to end: **a sentence in → one tool call → a card in the conversation**. The subject is this repository itself.
+
+**1 · Ask in plain language.** *"Draw the architecture of the dsh-diagram repository."* No YAML, no coordinates, no colours — the DSL is the model's job, not the user's.
+
+**2 · The model writes a spec.** Semantics only: who contains whom, who depends on whom. It never states a position or a hex colour, because the engine computes both. This is the spec it produced for this repository:
+
+<details>
+<summary>YAML</summary>
+
+```yaml
+version: "1.0"
+
+meta:
+  title: dsh-diagram 仓库关系图
+  desc: packages/ 引擎 · plugin/ 可安装 bundle · scripts/ 构建与验证
+  summary: 本图由本仓库自己的引擎渲染：YAML → 校验 → 分层/坐标/走线 → .drawio
+  guide: 箭头 = 依赖 / 使用方向（A → B：A 依赖、读取或写出 B）
+
+layout:
+  direction: TB
+
+groups:
+  - id: g_pkgs
+    title: packages/ 引擎（pnpm workspace，零图布局依赖）
+    variant: filled
+  - id: g_schema
+    title: schema
+    parent: g_pkgs
+  - id: g_layout
+    title: layout
+    parent: g_pkgs
+  - id: g_drawio
+    title: drawio
+    parent: g_pkgs
+  - id: g_core
+    title: core
+    parent: g_pkgs
+  - id: g_plugin
+    title: plugin/ 可安装 bundle（刻意不是 workspace 成员）
+    variant: filled
+  - id: g_scripts
+    title: scripts/ 构建与验证
+  - id: g_spec
+    title: 规格与产物（out/ 已 gitignore）
+    variant: dashed
+
+nodes:
+  - id: n_types
+    title: 类型定义
+    group: g_schema
+    desc: ArchSpec / Meta / Group / Node / Edge
+    variant: primary
+  - id: n_validate
+    title: 校验器
+    group: g_schema
+    desc: Ajv draft 2020-12 + 语义检查
+    variant: warning
+    items:
+      - 结构 / 引用 / 层级一次报全
+      - 嵌套 parent 环与深度 ≤ 3
+      - did-you-mean 候选
+  - id: n_parse
+    title: YAML 解析
+    group: g_schema
+    desc: js-yaml，错误转同构诊断
+    items:
+      - 行号对齐
+      - 缺省值填充
+
+  - id: n_sizing
+    title: 尺寸预估
+    group: g_layout
+    items:
+      - 固定 240px 宽
+      - title / desc / items 行高
+  - id: n_layering
+    title: 分层
+    group: g_layout
+    desc: 单元级 Meta-DAG
+    items:
+      - 入度优先破环
+      - 最长路径分层
+      - 脊柱-肋骨折叠
+  - id: n_placement
+    title: 坐标分配
+    group: g_layout
+    items:
+      - (Rank, Order) 虚拟双轴
+      - 列槽位对齐矩阵
+      - 方向逐层交替
+  - id: n_routing
+    title: 正交走线
+    group: g_layout
+    variant: primary
+    items:
+      - 三类型通道
+      - 长边外绕、绕开无关组
+      - 交叉全局三轮裁决
+
+  - id: n_model
+    title: mxGraphModel
+    group: g_drawio
+    items:
+      - 画布随 bounds 自适应
+      - 无压缩明文 mxfile
+  - id: n_cells
+    title: cell 生成
+    group: g_drawio
+    items:
+      - 分组容器（可嵌套）
+      - 卡片 HTML value
+      - 显式折线 mxPoint
+  - id: n_serialize
+    title: 序列化
+    group: g_drawio
+    items:
+      - 父 cell 先于子 cell
+      - 转义 & < > "
+  - id: n_parse_drawio
+    title: 反解 parse-drawio
+    group: g_drawio
+    desc: .drawio → YAML
+    variant: muted
+    items:
+      - 明文与压缩页
+      - 手改降级 + warnings
+
+  - id: n_render
+    title: renderArchitecture()
+    group: g_core
+    desc: parse → validate → layout → export
+    variant: primary
+  - id: n_cli
+    title: CLI
+    group: g_core
+    desc: validate / build / build-all
+
+  - id: n_host
+    title: 宿主半 index.js
+    group: g_plugin
+    variant: primary
+    desc: esbuild 产物，@deepseek-ai/* 外置
+    items:
+      - render_architecture
+      - yaml_to_drawio
+      - drawio_to_yaml
+  - id: n_client
+    title: 客户端半 client.js
+    group: g_plugin
+    variant: primary
+    desc: 浏览器模块表里的 React 工厂
+    items:
+      - tool.call.toolview 卡片
+      - conversation.chat.turnTail 预览
+      - 客户端自带引擎（无 Ajv）
+  - id: n_patch
+    title: cordis.patch.yml
+    group: g_plugin
+    desc: insert 一行 dsh-diagram
+    variant: muted
+
+  - id: n_build_plugin
+    title: build-plugin.mjs
+    group: g_scripts
+    items:
+      - esbuild 出两半
+      - client 套 __ModuleLoader__ 信封
+  - id: n_typecheck
+    title: typecheck-plugin.mjs
+    group: g_scripts
+    desc: 映射 dsh 检出的 .d.ts
+  - id: n_selfcheck
+    title: verify-plugin-activation.ps1
+    group: g_scripts
+    desc: 隔离 profile 起新进程
+    items:
+      - 组合检查（--dump-config）
+      - 激活检查（stderr 无告警）
+  - id: n_audit
+    title: audit-routing.ts
+    group: g_scripts
+    desc: 走线质量程序化断言
+  - id: n_roundtrip
+    title: roundtrip-check.ts
+    group: g_scripts
+    desc: YAML 与 .drawio 幂等
+
+  - id: n_examples
+    title: examples/*.yaml
+    group: g_spec
+    items:
+      - 01–05 合法样例
+      - 90-invalid 反例
+  - id: n_out
+    title: out/*.drawio + PNG
+    group: g_spec
+    variant: muted
+    desc: draw.io 桌面版导出
+
+edges:
+  - from: n_parse
+    to: n_types
+    label: 依赖
+  - from: n_validate
+    to: n_types
+    label: 依赖
+  - from: n_sizing
+    to: n_types
+    label: 依赖
+  - from: n_layering
+    to: n_validate
+    label: 常量导入
+  - from: n_placement
+    to: n_layering
+    label: 消费分层
+  - from: n_routing
+    to: n_placement
+    label: 消费坐标
+  - from: n_model
+    to: n_routing
+    label: 消费折线
+  - from: n_cells
+    to: n_model
+    label: 写 cell
+  - from: n_serialize
+    to: n_cells
+    label: 序列化
+
+  - from: n_render
+    to: n_validate
+    label: 串联
+  - from: n_render
+    to: n_routing
+    label: 串联
+  - from: n_render
+    to: n_serialize
+    label: 串联
+  - from: n_cli
+    to: n_render
+    label: 调用
+  - from: n_cli
+    to: n_examples
+    label: 读入
+  - from: n_cli
+    to: n_out
+    label: 写出
+
+  - from: n_host
+    to: n_render
+    label: 内联打包
+  - from: n_client
+    to: n_parse
+    label: 自带引擎
+  - from: n_client
+    to: n_routing
+    label: 布局
+  - from: n_client
+    to: n_serialize
+    label: 导出
+  - from: n_patch
+    to: n_host
+    label: 插入行
+
+  - from: n_build_plugin
+    to: n_host
+    label: 生成
+  - from: n_build_plugin
+    to: n_client
+    label: 生成
+  - from: n_typecheck
+    to: n_client
+    label: 类型检查
+  - from: n_selfcheck
+    to: n_host
+    label: 激活自检
+  - from: n_audit
+    to: n_routing
+    label: 断言
+  - from: n_roundtrip
+    to: n_parse_drawio
+    label: 往返
+  - from: n_roundtrip
+    to: n_examples
+    label: 读夹具
+```
+
+</details>
+
+**3 · It calls one tool.**
+
+```text
+render_architecture(
+  title     = "dsh-diagram 仓库关系图",
+  yaml_spec = <the YAML above>
+)
+```
+
+The call returns a single line in the transcript — never XML:
+
+```text
+已生成架构图：8 个分组 / 23 个节点 / 27 条连线，画布 2352×1540；预览卡片已挂在对话中，可导出 dsh-diagram 仓库关系图.drawio。
+```
+
+**4 · dsh renders the card.** Zoomable, with hover-highlighted edges; the PNG below is that same layout exported through draw.io:
+
+<img src="repo-map.png" width="1100" alt="The preview card rendered in dsh for the dsh-diagram repository">
+
+**5 · Keep the file, or come back later.** `save_drawio: true` writes the `.drawio` into the session workspace for further editing in draw.io, and `drawio_to_yaml` turns a hand-edited diagram back into YAML so the loop can run again. A spec with mistakes comes back the same way — one report listing every problem with its path and a did-you-mean candidate.
 
 ## Use this repository
 
