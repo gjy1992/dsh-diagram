@@ -25,15 +25,19 @@ kind: "package-reference"
 
 ### 安装
 
-```bash
-dsh plugin add @gjy_1992/dsh-diagram
+安装检出目录即可 —— 仓库里已提交的 `index.js` 与 `client.js` 就是构建产物，不需要先编译或拷贝。
+
+在 dsh 对话里说一句：
+
+> 把 `<repo>\plugin` 这个 bundle 装到当前 profile。
+
+agent 会执行一次 `plugin_manager` 调用 —— 它是 dsh 的工具，不是 shell 命令：
+
+```text
+plugin_manager(action: install_bundle, target: <repo>\plugin)
 ```
 
-也可以直接装检出目录（插件目录本身就是一个自包含 bundle）：
-
-```
-plugin_manager  install_bundle   target: <repo>\plugin
-```
+Web GUI 的插件页暴露同一套控件，也是 dsh 让你批准依赖构建脚本的地方。profile 由 `dsh` 代写（`link:` 依赖、`dsh.profile.bundles`、patch 里那一行）—— 这三处都不要手改，也不要在 profile 目录里跑 pnpm。
 
 | 要求 | 取值 |
 | :--- | :--- |

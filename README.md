@@ -354,21 +354,28 @@ The call returns a single line in the transcript — never XML:
 
 ### Install the plugin
 
-The plugin lives in [`plugin/`](plugin) as a self-contained bundle (deliberately *not* a workspace member). Install it into a `dsh` profile either from npm, or straight from a checkout:
+The plugin lives in [`plugin/`](plugin) as a self-contained bundle (deliberately *not* a workspace member). Its committed `index.js` and `client.js` are the build output, so a checkout installs as-is — nothing to build or copy first.
 
-```
-plugin_manager  install_bundle   target: C:\path\to\dsh-diagram\plugin
+**Ask dsh to install it.** In a `dsh` conversation:
+
+> Install the bundle at `C:\path\to\dsh-diagram\plugin` into this profile.
+
+That is one `plugin_manager` call — a dsh tool, not a shell command — with the plugin directory as its `target`:
+
+```text
+plugin_manager(action: install_bundle, target: C:\path\to\dsh-diagram\plugin)
 ```
 
-```bash
-dsh plugin add @gjy_1992/dsh-diagram
-```
+The Web UI's plugin page exposes the same controls, and is also where dsh asks you to approve package build scripts. Either way `dsh` edits the profile for you: `%USERPROFILE%\.dsh\profiles\<profile>\package.json` gains `"@gjy_1992/dsh-diagram": "link:C:/path/to/dsh-diagram/plugin"`, the bundle joins `dsh.profile.bundles`, and `cordis.patch.yml` gains its row. Do not edit those three by hand, and do not run pnpm in the profile directory — `install_bundle` does all of it.
 
 A change to the plugin's **host half** needs a `dsh` restart to take effect (Node caches module jobs by URL); the **client half** reloads on a page refresh. See [`plugin/README.md`](plugin/README.md) for the three tools and the YAML cheat sheet.
 
 ### Run the engine from the command line
 
+Node ≥ 20 is the only prerequisite, and `pnpm` needs no npm either: Node ships corepack, and the root `packageManager` field pins the version. `corepack enable` wires up `pnpm@11.7.0` (fetched on first use); `corepack pnpm install` works with no shim at all.
+
 ```bash
+corepack enable   # one-off; skip it and use `corepack pnpm` instead
 pnpm install
 pnpm cli validate examples/03-rpc-items.yaml      # structured diagnostics, exit 0/1
 pnpm cli build examples/03-rpc-items.yaml -o out  # -> out/03-rpc-items.drawio

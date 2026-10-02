@@ -997,6 +997,19 @@ T9（PRD Phase 3 行内 ` ```arch-yaml `）的挂起理由本轮只做了一次�
 
 顺带修掉两处与发布相关的陈旧内容：根 `package.json` 的 `description`（还写着「Phase 1 … ELK 布局」，ELK 早已移除）与新增的 `pnpm roundtrip` 脚本（README 的验证表引用了 `scripts/roundtrip-check.ts`，此前只有裸文件、没有 npm script）。
 
+### 安装说明校正：README 不写 npm（2026-10-02）
+
+复核四份 README 的安装段落，发现两条与本机实况不符的说明，一并改掉：
+
+| 项 | 实况（本轮复核） | 改法 |
+| :--- | :--- | :--- |
+| npm 安装 | `npm view @gjy_1992/dsh-diagram` → **404**（§P2.16 的发布仍未做，卡在凭据） | **README 里一律不写 npm**（用户裁决 2026-10-02：短期没有发布计划，等真发上去再说），只留检出目录 `plugin_manager install_bundle` 这一条路。另按用户反馈，原来那行 `plugin_manager  install_bundle   target: …` 是半截伪代码、看不出是什么，故四份 README 改写成「对话里说一句话 → 一次 `plugin_manager(action: install_bundle, target: …)` 调用 → 列出 dsh 会改的 profile 三处」，并写明 `plugin_manager` 是 dsh 工具而非 shell 命令（工具定义在 `app.asar`：action 枚举 + `target`） |
+| pnpm 前置 | `C:\Program Files\nodejs\pnpm.ps1` 实为 **corepack shim**（`corepack/dist/pnpm.js`），`corepack pnpm --version` → 11.7.0 —— 本机 pnpm 从头到尾没经过 npm（§M0 的 R7 备选也用不上） | 「命令行跑引擎」补一句 corepack 前置：`corepack enable`（或直接 `corepack pnpm`），npm 不在链路上 |
+
+四份 README（根 en/zh + `plugin/` en/zh）**不出现 npm，也不出现「尚未发布」**：安装只讲检出目录这一条路。404 这个事实与发布步骤留在本节和 §P2.14（仓库自己看）。**哪天真发布上去，再往 README 补一行 `dsh plugin add @gjy_1992/dsh-diagram` 即可** —— 在那之前 README 对它保持沉默。
+
+四份 README 的中英标题层级与顺序保持镜像（已复核：根 19/19、`plugin/` 19/19，`2,2,2,2,2,3,3,3,2,3,3,3,2,2,3,3,2,3,2` 与 `2,2,2,3,3,3,3,2,2,3,3,3,2,2,3,3,2,3,2`）。
+
 ### GitHub topic
 
 给公开仓库打上 topic，让它在 GitHub 上被识别/检索为 dsh 插件。用 `PUT /repos/{owner}/{repo}/topics`（**会整体替换** → 先 GET 现有值再合并）：

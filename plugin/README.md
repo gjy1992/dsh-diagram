@@ -25,15 +25,19 @@ This package is the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-h
 
 ### Install
 
-```bash
-dsh plugin add @gjy_1992/dsh-diagram
+Install the checkout — the committed `index.js` and `client.js` are the build output, so nothing needs building or copying first.
+
+Ask dsh in a conversation:
+
+> Install the bundle at `<repo>\plugin` into this profile.
+
+That is one `plugin_manager` call — a dsh tool, not a shell command:
+
+```text
+plugin_manager(action: install_bundle, target: <repo>\plugin)
 ```
 
-Or install a checkout directly (the plugin directory is a self-contained bundle):
-
-```
-plugin_manager  install_bundle   target: <repo>\plugin
-```
+The Web UI's plugin page exposes the same controls, and is also where dsh asks you to approve package build scripts. `dsh` writes the profile for you (the `link:` dependency, `dsh.profile.bundles`, the patch row) — do not edit those by hand or run pnpm in the profile directory.
 
 | Requirement | Value |
 | :--- | :--- |

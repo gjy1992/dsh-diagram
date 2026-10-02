@@ -354,21 +354,28 @@ render_architecture(
 
 ### 安装插件
 
-插件在 [`plugin/`](plugin) 里，是一个自包含 bundle（**刻意不是** workspace 成员）。装进 `dsh` profile 有两种方式 —— 从 npm，或直接从检出目录：
+插件在 [`plugin/`](plugin) 里，是一个自包含 bundle（**刻意不是** workspace 成员）。仓库里已提交的 `index.js` 与 `client.js` 就是构建产物，所以检出目录可以直接装 —— 不需要先编译或拷贝。
 
-```
-plugin_manager  install_bundle   target: C:\path\to\dsh-diagram\plugin
+**让 dsh 自己装。** 在 dsh 对话里说一句：
+
+> 把 `C:\path\to\dsh-diagram\plugin` 这个 bundle 装到当前 profile。
+
+agent 会执行一次 `plugin_manager` 调用 —— 它是 dsh 的工具，不是 shell 命令 —— `target` 就是插件目录：
+
+```text
+plugin_manager(action: install_bundle, target: C:\path\to\dsh-diagram\plugin)
 ```
 
-```bash
-dsh plugin add @gjy_1992/dsh-diagram
-```
+Web GUI 的插件页暴露的是同一套控件，也是 dsh 让你批准依赖构建脚本的地方。两条路都由 `dsh` 代你改 profile：`%USERPROFILE%\.dsh\profiles\<profile>\package.json` 里出现 `"@gjy_1992/dsh-diagram": "link:C:/path/to/dsh-diagram/plugin"`，bundle 进入 `dsh.profile.bundles`，`cordis.patch.yml` 里多出它那一行。这三处都不要手改，也不要在 profile 目录里跑 pnpm —— `install_bundle` 全部代劳。
 
 插件的**宿主半**改动需要重启 `dsh` 才生效（Node 会按 URL 缓存模块作业）；**客户端半**刷新页面即生效。三个工具与 YAML 速查见 [`plugin/README.md`](plugin/README.md)。
 
 ### 从命令行跑引擎
 
+唯一前置是 Node ≥ 20；`pnpm` 同样不需要 npm —— Node 自带 corepack，根 `packageManager` 字段已把版本钉住。`corepack enable` 就能接上 `pnpm@11.7.0`（首次使用时自动取回）；不装 shim 也可以直接 `corepack pnpm install`。
+
 ```bash
+corepack enable   # 一次性；不执行它就改用 `corepack pnpm`
 pnpm install
 pnpm cli validate examples/03-rpc-items.yaml      # 结构化诊断，exit 0/1
 pnpm cli build examples/03-rpc-items.yaml -o out  # -> out/03-rpc-items.drawio
